@@ -1,0 +1,48 @@
+# Welcome to epochalypse's Documentation '
+
+## Overview
+
+:::{toctree}
+:maxdepth: 2
+:hidden:
+:caption: Contents:
+
+Home <self>
+:::
+
+This is the landing page of your docs. you can update it as you'd like to.
+This documentation example uses myst markdown as the primary documentation syntax.
+
+
+:::{button-link} <https://www.pyopensci.org/python-package-guide/documentation/hosting-tools/myst-markdown-rst-doc-syntax.html>
+:color: primary
+:class: sd-rounded-pill float-left
+
+Learn more about myst in our pyOpenSci packaging guide.
+
+:::
+
+Myst is a version of markdown that has more formatting flexibility.
+This is what a sphinx directive looks like using myst markdown formatting:
+
+```markdown
+:::{toctree}
+:maxdepth: 2
+:caption: Contents:
+:::
+
+```
+
+If you see syntax like the syntax below, you are looking at rst.
+
+```rst
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+```
+
+## Copyright
+
+- Copyright © 2025 adrn.
+- Free software distributed under the MIT License.
+

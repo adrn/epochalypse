@@ -1,0 +1,242 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling", "hatch-vcs"]
+
+[project]
+name = "epochalypse"
+dynamic = ["version"]
+description = "Tools for Gaia epoch data"
+authors = [
+    { name = "adrn", email = "583379+adrn@users.noreply.github.com" },
+]
+license = "MIT"
+requires-python = ">= 3.12"
+readme = {"file" = "README.md", "content-type" = "text/markdown"}
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+]
+# TODO: add keywords
+keywords = []
+dependencies = [
+    "jax>=0.8.0",
+    "jaxoplanet>=0.1.0",
+    "jaxtyping>=0.3.3",
+    "plum-dispatch>=2.6.0",
+    "quaxed>=0.10.2",
+    "unxt>=1.7.2",
+    "numpyro>=0.15.0",
+    "matplotlib>=3.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/adrn/epochalypse"
+"Source Code" = "https://github.com/adrn/epochalypse"
+"Bug Tracker" = "https://github.com/adrn/epochalypse/issues"
+Documentation = "https://epochalypse.readthedocs.io"
+Download = "https://pypi.org/project/epochalypse/#files"
+
+[project.optional-dependencies]
+# The groups below should be in the [development-groups] table
+# They are here now because hatch hasn't released support for them but plans to
+# in Mid November 2025.
+dev = [
+    "hatch",
+    "pre-commit",
+    "ipykernel"
+]
+
+docs = [
+    "sphinx~=8.0",
+    "myst-parser>=4.0",
+    "pydata-sphinx-theme~=0.16",
+    "sphinx-autobuild>=2024.10.3",
+    "sphinx-autoapi>=3.6.0",
+    "sphinx_design>=0.6.1",
+    "sphinx-copybutton>=0.5.2",
+]
+
+build = [
+    "pip-audit",
+    "twine",
+]
+tests = [
+    "pytest",
+    "pytest-cov",
+    "pytest-raises",
+    "pytest-randomly",
+    "pytest-xdist",
+]
+style = [
+    "pydoclint",
+    "ruff",
+]
+
+
+################################################################################
+# Tool Configuration
+################################################################################
+
+# Hatch is building your package's wheel and sdist
+# This tells hatch to only include Python packages (i.e., folders with __init__.py) in the build.
+# read more about package building, here:
+# https://www.pyopensci.org/python-package-guide/package-structure-code/python-package-distribution-files-sdist-wheel.html
+[tool.hatch.build]
+only-packages = true
+
+# This tells Hatch to build the package from the src/ directory.
+# Read more about src layouts here: https://www.pyopensci.org/python-package-guide/package-structure-code/python-package-structure.html
+[tool.hatch.build.targets.wheel]
+packages = ["src/epochalypse"]
+
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/epochalypse/_version.py"
+
+[tool.hatch.version]
+source = "vcs"
+
+######## Configure pytest for your test suite ########
+[tool.pytest.ini_options]
+testpaths = ["tests"] # Tells pytest what directory tests are in
+markers = ["raises"] # Tells pytest to not raise a warning if you use @pytest.mark.raises
+
+[tool.coverage.paths]
+source = [
+    "src/epochalypse",
+    "*/site-packages/epochalypse",
+]
+
+[tool.coverage.run]
+# Ensures code coverage is measured for branches (conditional statements with different outcomes) in your code.
+branch = true
+parallel = true
+omit = [
+    "src/epochalypse/_version.py",
+]
+
+[tool.coverage.report]
+# This configures the output test coverage report
+exclude_lines = ["pragma: no cover"]
+precision = 2
+
+################################################################################
+# Tool configuration
+################################################################################
+
+[tool.mypy]
+  disable_error_code = [
+    "name-defined",  # for jaxtyping
+  ]
+
+  disallow_incomplete_defs = false
+  disallow_untyped_defs = false
+  enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+  files = ["src", "tests"]
+  python_version = "3.12"
+  strict = true
+  warn_return_any = false
+  warn_unreachable = true
+  warn_unused_configs = true
+
+  [[tool.mypy.overrides]]
+    disable_error_code = ["name-defined", "no-redef", "type-arg"]
+    disallow_incomplete_defs = true
+    disallow_untyped_defs = true
+    module = "epochalypse.*"
+
+
+  [[tool.mypy.overrides]]
+    ignore_missing_imports = true
+    module = [
+      "astropy.*",
+      "equinox.*",
+      "hypothesis.*",
+      "jax.*",
+      "jaxtyping.*",
+      "numpy.*",
+      "plum.*",
+      "quax.*",
+      "quaxed.*",
+      "unxt.*",
+      "jaxoplanet.*"
+    ]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D107",  # 'Missing docstring in __init__' ignored because pydoclint wants us to document the class instead.
+    "D203",  # '1 blank line required before class docstring' ignored because we want no blank line.
+    "D212",  # 'Multi-line docstring summary should start at the first line' ignored because we want the summary to start on the second line.
+    "D407",  # 'Missing dashed underline after section' ignored because Google style docstrings don't underline.
+    "D413",  # 'Missing blank line after section' ignored .
+    "D401",  # 'First line should be in imperative mood' ignored
+    "ANN001",  # Missing type annotation for {arg} in function" ignored
+    "ANN201",  # 'Missing type annotation for {return}'.
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
+    "ARG001",  # Unused function argument  # TODO: resolve
+    "B008",    # Do not perform function calls in argument defaults
+    "COM812",  # <- for ruff.format
+    "D103",    # Missing docstring in public function  # TODO: resolve
+    "D105",    # Missing docstring in magic method
+    "D203",    # 1 blank line required before class docstring
+    "D213",    # Multi-line docstring summary should start at the second line
+    "ERA001",  # Commented out code
+    "F722",    # Syntax error in forward annotation  <- jaxtyping
+    "F811",    # redefinition of unused '...'  <- plum-dispatch
+    "F821",    # undefined name '...'  <- jaxtyping
+    "FIX002",  # Line contains TODO
+    "ISC001",  # Conflicts with formatter
+    "PD",      # Pandas
+    "PLR09",   # Too many <...>
+    "PLR2004", # Magic value used in comparison
+    "PYI041",  # Use `complex` instead of `int | complex` <- plum is more strict
+    "RUF022",  # `__all__` is not sorted
+    "SLF001",  # private-member-access TODO: unignore this.
+    "TC001",   # Move into a type-checking block
+    "TD002",   # Missing author in TODO
+    "TD003",   # Missing issue link on the line following this TODO
+    "N806",    # Variable names must be lowercase
+    "EM101",   # Assign string to variable for exception
+    "TRY003",  # ??
+]
+exclude = [
+    "src/epochalypse/_version.py",
+    "docs/conf.py",
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"__init__.py" = [
+    "E401",  # 'Multiple imports on one line'
+    "E402",  # 'Module level import not at top of file'
+    "F401",  # 'Imported but unused'
+    "I001",  # 'Import block is un-sorted or un-formatted' ignored because we may have to import in a particular, not-alphabetical order.
+]
+"tests/**/*.py" = [
+    "S101",  # 'Use of assert detected' ignored because we are using pytest.
+    "INP001",  # 'Insecure input' ignored because we are testing.
+    "ANN201",  # 'Missing type annotation for {return}' ignored because all tests return `None`.
+]
+
+[tool.ruff.lint.isort]
+case-sensitive = true
+known-first-party = ["src", "epochalypse"]
+lines-after-imports = 1
+
+[tool.pydoclint]
+style = "numpy"
+arg-type-hints-in-signature = false
+arg-type-hints-in-docstring = true
+check-return-types = false
+check-yield-types = false
+exclude = "_version.py"
+# Use UV to create Hatch environments
+[tool.hatch.envs.default]
+installer = "uv"
+
