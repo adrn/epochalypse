@@ -29,6 +29,9 @@ dependencies = [
     "unxt>=1.7.2",
     "numpyro>=0.15.0",
     "equinox>=0.13.2",
+    "healpy>=1.18.1",
+    "pooch>=1.8.2",
+    "h5py>=3.15.1",
 ]
 
 [project.urls]
@@ -44,6 +47,7 @@ Download = "https://pypi.org/project/epochalypse/#files"
 # in Mid November 2025.
 extra = [
     "matplotlib>=3.5.0",
+    "pandas>=2.3.3",
 ]
 
 dev = [
@@ -165,7 +169,10 @@ precision = 2
       "quax.*",
       "quaxed.*",
       "unxt.*",
-      "jaxoplanet.*"
+      "jaxoplanet.*",
+      "healpy.*",
+      "h5py.*",
+      "pandas.*",
     ]
 
 [tool.ruff]
@@ -207,6 +214,7 @@ ignore = [
     "TD003",   # Missing issue link on the line following this TODO
     "N806",    # Variable names must be lowercase
     "EM101",   # Assign string to variable for exception
+    "EM102",   # Something about f-strings in exceptions
     "TRY003",  # ??
 ]
 exclude = [
@@ -230,7 +238,6 @@ exclude = [
 [tool.ruff.lint.isort]
 case-sensitive = true
 known-first-party = ["src", "epochalypse"]
-lines-after-imports = 1
 
 [tool.pydoclint]
 style = "numpy"
