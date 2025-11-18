@@ -25,11 +25,9 @@ dependencies = [
     "jax>=0.8.0",
     "jaxoplanet>=0.1.0",
     "jaxtyping>=0.3.3",
-    "plum-dispatch>=2.6.0",
     "quaxed>=0.10.2",
     "unxt>=1.7.2",
-    "numpyro>=0.15.0",
-    "matplotlib>=3.5.0",
+    "numpyro>=0.15.0"
 ]
 
 [project.urls]
@@ -43,6 +41,10 @@ Download = "https://pypi.org/project/epochalypse/#files"
 # The groups below should be in the [development-groups] table
 # They are here now because hatch hasn't released support for them but plans to
 # in Mid November 2025.
+extra = [
+    "matplotlib>=3.5.0",
+]
+
 dev = [
     "hatch",
     "pre-commit",
