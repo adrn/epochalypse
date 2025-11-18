@@ -137,7 +137,7 @@ def process_scanning_law(
     per_pixel : dict
         Maps pixel_id -> np.ndarray[DTYPE] of unique scans
     """
-    per_pixel: dict[int, list] = {}
+    per_pixel: dict[int, list[np.ndarray]] = {}
     scan_gap_days = scan_gap_hours / 24.0
 
     # Process both FOVs
