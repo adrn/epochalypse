@@ -27,7 +27,8 @@ dependencies = [
     "jaxtyping>=0.3.3",
     "quaxed>=0.10.2",
     "unxt>=1.7.2",
-    "numpyro>=0.15.0"
+    "numpyro>=0.15.0",
+    "equinox>=0.13.2",
 ]
 
 [project.urls]

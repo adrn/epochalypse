@@ -624,6 +624,7 @@ wheels = [
 name = "epochalypse"
 source = { editable = "." }
 dependencies = [
+    { name = "equinox" },
     { name = "jax" },
     { name = "jaxoplanet" },
     { name = "jaxtyping" },
@@ -668,6 +669,7 @@ tests = [
 
 [package.metadata]
 requires-dist = [
+    { name = "equinox", specifier = ">=0.13.2" },
     { name = "hatch", marker = "extra == 'dev'" },
     { name = "ipykernel", marker = "extra == 'dev'" },
     { name = "jax", specifier = ">=0.8.0" },
