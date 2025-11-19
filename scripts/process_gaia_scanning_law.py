@@ -275,6 +275,7 @@ def process_scanning_law(
         for p, res_arr in zip(unq_pix, result_arrays, strict=True):
             per_pixel.setdefault(int(p), []).append(res_arr)
 
+        # The non-multiprocessing version:
         # for p in np.unique(pix_unique):
         #     mask = pix_unique == p
         #     per_pixel.setdefault(int(p), []).append(arr[mask])
@@ -310,7 +311,7 @@ def main(
     }
 
     # Load entire CSV
-    print(f"Loading {scan_law_file!r}...")
+    print(f"Loading {scan_law_file!s}...")
     df = pd.read_csv(
         scan_law_file,
         usecols=list(dtypes.keys()),
@@ -377,7 +378,7 @@ def main(
 
             write_index(h5f, counts)
 
-        print(f"Wrote {output_path}")
+        print(f"Wrote {output_file!s}")
 
 
 if __name__ == "__main__":
