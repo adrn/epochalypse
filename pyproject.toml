@@ -48,6 +48,8 @@ Download = "https://pypi.org/project/epochalypse/#files"
 extra = [
     "matplotlib>=3.5.0",
     "pandas>=2.3.3",
+    "gaiaunlimited @ git+https://github.com/gaia-unlimited/gaiaunlimited.git",
+    "setuptools",  # needed for gaiaunlimited for pkg_resources...
 ]
 
 dev = [
@@ -105,6 +107,9 @@ version-file = "src/epochalypse/_version.py"
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 ######## Configure pytest for your test suite ########
 [tool.pytest.ini_options]
