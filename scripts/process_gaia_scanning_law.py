@@ -51,19 +51,21 @@ DTYPE = np.dtype(
 # Gaia archive time origin: 2010-01-01T00:00 TCB
 GAIA_TIME_ORIGIN_JD = 2455197.5
 
-# DR3 time range: https://www.cosmos.esa.int/web/gaia/dr3
+# DR3 full time range: https://www.cosmos.esa.int/web/gaia/dr3
 # 25 July 2014 (10:30 UTC) and 28 May 2017 (08:44 UTC)
-# Time(["2014-07-25 10:30:00", "2017-05-28 08:44:00"], scale="utc").tcb.jd
-GAIA_DR3_BJD_RANGE = (2456863.93849031, 2457901.86491846)
+# However, Lindegren+2021 says: data from first month "ecliptic pole scanning law" not
+# used, to actually stars 22 August 2014 (21:00 UTC)
+# Time(["2014-08-22 21:00:00", "2017-05-28 08:44:00"], scale="utc").tcb.jd
+GAIA_DR3_BJD_RANGE = (2456892.376, 2457901.865)
 
-# https://www.cosmos.esa.int/web/gaia/dr4
+# DR4 astrometry time range unknown. Full range: https://www.cosmos.esa.int/web/gaia/dr4
 # 25 July 2014 (10:30 UTC) and 20 January 2020 (22:00 UTC)
-# Time(["2014-07-25 10:30:00", "2020-01-20 22:00:00"], scale="utc").tcb.jd
-GAIA_DR4_BJD_RANGE = (2456863.93849031, 2458869.41771123)
+# Time(["2014-08-22 21:00:00", "2020-01-20 22:00:00"], scale="utc").tcb.jd
+# Best guess: start of DR3 astrometry to end of range as reported
+GAIA_DR4_BJD_RANGE = (2456892.376, 2458869.418)
 
-# Presumed: start to end of observations
-# end? 2025-01-15T06:16:32 TCB
-GAIA_DR5_BJD_RANGE = (2456863.93849031, 2460690.76148)
+# Presumed: start to end of observations, including EPSL data?
+GAIA_DR5_BJD_RANGE = (2456863.939, 2460690.762)
 
 dr_bjd_ranges = {
     "dr3": GAIA_DR3_BJD_RANGE,
