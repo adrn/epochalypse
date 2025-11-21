@@ -74,50 +74,17 @@ dr_bjd_ranges = {
 }
 
 
-def find_unique_scans(
-    times: np.ndarray, pixel_ids: np.ndarray, scan_gap_days: float
-) -> np.ndarray:
-    """Identify unique scans from consecutive samples.
-
-    Consecutive samples within scan_gap_days and same pixel are considered part of the
-    same scan transit. Returns indices of representative observations (one per unique
-    scan).
-
-    Parameters
-    ----------
-    times : array
-        Observation times in BJD
-    pixel_ids : array
-        HEALPix pixel IDs for each observation
-    scan_gap_days : float
-        Maximum time gap (in days) to consider samples as same scan.
-
-    Returns
-    -------
-    indices : array
-        Boolean mask of representative observations for unique scans
-    """
-    if len(times) == 0:
-        raise ValueError("No times provided to find_unique_scans")
-
-    # Sort by pixel then time
-    sort_idx = np.lexsort((times, pixel_ids))
-    times_sorted = times[sort_idx]
-    pix_sorted = pixel_ids[sort_idx]
-
-    # Identify scan breaks - different pixel or time gap > threshold
-    pixel_change = np.diff(pix_sorted) != 0
-    time_gap = np.diff(times_sorted) > scan_gap_days
-    scan_breaks = pixel_change | time_gap
-
-    # First observation is always a scan start
-    scan_starts = np.r_[True, scan_breaks]
-
-    # Map back to original order
-    result = np.zeros(len(times), dtype=bool)
-    result[sort_idx] = scan_starts
-
-    return result
+def _scan_start_mask(times: np.ndarray, scan_gap_days: float) -> np.ndarray:
+    """Return mask selecting one representative row per temporal cluster."""
+    if times.size == 0:
+        return np.zeros(0, dtype=bool)
+    order = np.argsort(times)
+    times_sorted = times[order]
+    time_gaps = np.diff(times_sorted) > scan_gap_days
+    scan_starts = np.r_[True, time_gaps]
+    mask = np.zeros(times.size, dtype=bool)
+    mask[order[scan_starts]] = True
+    return mask
 
 
 def write_index(h5: h5py.File, counts: dict[int, int]) -> None:
@@ -145,11 +112,13 @@ def _unpack_dtype(spec: Any) -> np.dtype:
     return np.dtype(spec)
 
 
-def _mask_worker_shared(
+def _pixel_worker_shared(
     pix: int,
     pix_meta: tuple[str, tuple[int, ...], str],
     data_meta: tuple[str, tuple[int, ...], object],
-) -> np.ndarray:
+    scan_gap_days: float,
+) -> tuple[int, np.ndarray] | tuple[int, None]:
+    """Return per-pixel unique scans using shared memory arrays."""
     pix_name, pix_shape, pix_dtype_spec = pix_meta
     data_name, data_shape, data_dtype_spec = data_meta
     pix_dtype = _unpack_dtype(pix_dtype_spec)
@@ -159,7 +128,15 @@ def _mask_worker_shared(
     try:
         pix_array = np.ndarray(pix_shape, dtype=pix_dtype, buffer=pix_mem.buf)
         data_array = np.ndarray(data_shape, dtype=data_dtype, buffer=data_mem.buf)
-        return data_array[pix_array == pix].copy()
+        mask = pix_array == pix
+        if not np.any(mask):
+            return pix, None
+        subset = data_array[mask]
+        times = subset["bjd_time"]
+        if times.size == 0:
+            return pix, None
+        scan_mask = _scan_start_mask(times, scan_gap_days)
+        return pix, subset[scan_mask].copy()
     finally:
         pix_mem.close()
         data_mem.close()
@@ -216,57 +193,49 @@ def process_scanning_law(
         # Compute HEALPix for valid observations
         pix = hp.ang2pix(nside, ra[valid], dec[valid], nest=nest, lonlat=True)
 
-        # Identify unique scans (one per scan transit, not one per 10s sample)
-        unique_scan_mask = find_unique_scans(times[valid], pix, scan_gap_days)
-
-        # Keep only the representative observations for unique scans
-        pix_unique = pix[unique_scan_mask]
-        arr = np.zeros(pix_unique.size, dtype=DTYPE)
-        arr["bjd_time"] = times[valid][unique_scan_mask]
-        arr["scan_angle_deg"] = df[f"scan_angle_fov{fov_num}"].to_numpy()[valid][
-            unique_scan_mask
+        # Prepare structured array for all valid samples; per-pixel selection happens
+        # inside the multiprocessing workers.
+        data = np.zeros(pix.size, dtype=DTYPE)
+        data["bjd_time"] = times[valid]
+        data["scan_angle_deg"] = df[f"scan_angle_fov{fov_num}"].to_numpy()[valid]
+        data["parallax_factor_al"] = df[f"parallax_factor_al_fov{fov_num}"].to_numpy()[
+            valid
         ]
-        arr["parallax_factor_al"] = df[f"parallax_factor_al_fov{fov_num}"].to_numpy()[
+        data["parallax_factor_ac"] = df[f"parallax_factor_ac_fov{fov_num}"].to_numpy()[
             valid
-        ][unique_scan_mask]
-        arr["parallax_factor_ac"] = df[f"parallax_factor_ac_fov{fov_num}"].to_numpy()[
-            valid
-        ][unique_scan_mask]
-        arr["fov"] = np.uint8(fov_num)
-        arr["ra_deg"] = ra[valid][unique_scan_mask]
-        arr["dec_deg"] = dec[valid][unique_scan_mask]
+        ]
+        data["fov"] = np.uint8(fov_num)
+        data["ra_deg"] = ra[valid]
+        data["dec_deg"] = dec[valid]
 
-        # Group by pixel id
-        unq_pix = np.unique(pix_unique)
+        unq_pix = np.unique(pix)
         if unq_pix.size == 0:
             continue
 
-        pix_shm = shared_memory.SharedMemory(create=True, size=pix_unique.nbytes)
-        pix_buf = np.ndarray(
-            pix_unique.shape, dtype=pix_unique.dtype, buffer=pix_shm.buf
-        )
-        pix_buf[:] = pix_unique
+        pix_shm = shared_memory.SharedMemory(create=True, size=pix.nbytes)
+        pix_buf = np.ndarray(pix.shape, dtype=pix.dtype, buffer=pix_shm.buf)
+        pix_buf[:] = pix
 
-        arr_shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
-        arr_buf = np.ndarray(arr.shape, dtype=arr.dtype, buffer=arr_shm.buf)
-        arr_buf[:] = arr
+        arr_shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
+        arr_buf = np.ndarray(data.shape, dtype=data.dtype, buffer=arr_shm.buf)
+        arr_buf[:] = data
 
         pix_meta = (
             pix_shm.name,
-            pix_unique.shape,
-            _pack_dtype(pix_unique.dtype),
+            pix.shape,
+            _pack_dtype(pix.dtype),
         )
         arr_meta = (
             arr_shm.name,
-            arr.shape,
-            _pack_dtype(arr.dtype),
+            data.shape,
+            _pack_dtype(data.dtype),
         )
 
         try:
             with Pool() as pool:
                 result_arrays = pool.starmap(
-                    _mask_worker_shared,
-                    ((int(p), pix_meta, arr_meta) for p in unq_pix),
+                    _pixel_worker_shared,
+                    ((int(p), pix_meta, arr_meta, scan_gap_days) for p in unq_pix),
                 )
         finally:
             pix_shm.close()
@@ -274,8 +243,10 @@ def process_scanning_law(
             arr_shm.close()
             arr_shm.unlink()
 
-        for p, res_arr in zip(unq_pix, result_arrays, strict=True):
-            per_pixel.setdefault(int(p), []).append(res_arr)
+        for pix_id, res_arr in result_arrays:
+            if res_arr is None or res_arr.size == 0:
+                continue
+            per_pixel.setdefault(int(pix_id), []).append(res_arr)
 
         # The non-multiprocessing version:
         # for p in np.unique(pix_unique):
