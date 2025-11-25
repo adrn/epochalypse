@@ -72,6 +72,50 @@ class KeplerianOrientation(eqx.Module):
             cos_i=jnp.cos(inclination),
         )
 
+    @classmethod
+    def from_thiele_innes(
+        cls,
+        A: Quantity["length"],
+        B: Quantity["length"],
+        F: Quantity["length"],
+        G: Quantity["length"],
+    ) -> tuple["KeplerianOrientation", Quantity["length"]]:
+        """Construct orientation from Thiele-Innes constants.
+
+        Inverts the Thiele-Innes constants to recover (ω, Ω, i, a).
+        Note: There's a sign ambiguity in inclination (i or π-i).
+
+        Returns
+        -------
+        orientation
+            KeplerianOrientation object
+        semi_major_axis
+            Recovered semi-major axis
+        """
+        import jax.numpy as jnp
+
+        # Semi-major axis from the norm
+        a = jnp.sqrt(A**2 + B**2 + F**2 + G**2)
+
+        # Inclination
+        cos_i = (A * G - B * F) / a**2
+        sin_i = jnp.sqrt(1 - cos_i**2)  # assumes 0 < i < π
+
+        # Longitude of ascending node
+        Omega = jnp.arctan2(B - F, A + G)
+
+        # Argument of pericenter
+        omega = jnp.arctan2(-A + G, B + F)
+
+        return (
+            cls.from_angles(
+                arg_peri=omega,
+                lon_asc_node=Omega,
+                inclination=jnp.arctan2(sin_i, cos_i),
+            ),
+            a,
+        )
+
     @property
     def arg_peri(self) -> Quantity["angle"]:
         """Argument of pericenter (ω)."""
@@ -136,3 +180,35 @@ class KeplerianOrientation(eqx.Module):
         r33 = c_i
 
         return jnp.array([[r11, r12, r13], [r21, r22, r23], [r31, r32, r33]])
+
+    def thiele_innes_constants(
+        self, semi_major_axis: Quantity["length"]
+    ) -> tuple[Quantity["length"], ...]:
+        """Compute Thiele-Innes constants (A, B, F, G).
+
+        These constants linearize the relationship between orbital position
+        and sky-plane projection.
+
+        Parameters
+        ----------
+        semi_major_axis
+            Semi-major axis of the orbit
+
+        Returns
+        -------
+        A, B, F, G
+            The four Thiele-Innes constants.
+        """
+        a = semi_major_axis
+        s_w = self.sin_arg_peri
+        c_w = self.cos_arg_peri
+        s_W = self.sin_lon_asc_node
+        c_W = self.cos_lon_asc_node
+        c_i = self.cos_i
+
+        A = a * (c_w * c_W - s_w * s_W * c_i)
+        B = a * (c_w * s_W + s_w * c_W * c_i)
+        F = a * (-s_w * c_W - c_w * s_W * c_i)
+        G = a * (-s_w * s_W + c_w * c_W * c_i)
+
+        return A, B, F, G

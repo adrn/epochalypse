@@ -221,6 +221,7 @@ ignore = [
     "EM102",   # Something about f-strings in exceptions
     "TRY003",  # ??
     "INP001",
+    "N803",    # Argument name should be lowercase
 ]
 exclude = [
     "src/epochalypse/_version.py",
