@@ -92,8 +92,6 @@ class KeplerianOrientation(eqx.Module):
         semi_major_axis
             Recovered semi-major axis
         """
-        import jax.numpy as jnp
-
         # Semi-major axis from the norm
         a = jnp.sqrt(A**2 + B**2 + F**2 + G**2)
 
