@@ -214,13 +214,13 @@ ignore = [
     "PYI041",  # Use `complex` instead of `int | complex` <- plum is more strict
     "RUF022",  # `__all__` is not sorted
     "SLF001",  # private-member-access TODO: unignore this.
-    "TC001",   # Move into a type-checking block
     "TD002",   # Missing author in TODO
     "TD003",   # Missing issue link on the line following this TODO
     "N806",    # Variable names must be lowercase
     "EM101",   # Assign string to variable for exception
     "EM102",   # Something about f-strings in exceptions
     "TRY003",  # ??
+    "INP001",
 ]
 exclude = [
     "src/epochalypse/_version.py",
@@ -250,8 +250,8 @@ arg-type-hints-in-signature = false
 arg-type-hints-in-docstring = true
 check-return-types = false
 check-yield-types = false
-exclude = "_version.py"
+exclude = ["_version.py", "scripts/*"]
+
 # Use UV to create Hatch environments
 [tool.hatch.envs.default]
 installer = "uv"
-
