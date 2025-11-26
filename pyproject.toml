@@ -31,7 +31,7 @@ dependencies = [
     "equinox>=0.13.2",
     "healpy>=1.18.1",
     "pooch>=1.8.2",
-    "h5py>=3.15.1"
+    "h5py>=3.15.1",
 ]
 
 [project.urls]
