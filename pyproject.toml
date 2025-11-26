@@ -31,7 +31,7 @@ dependencies = [
     "equinox>=0.13.2",
     "healpy>=1.18.1",
     "pooch>=1.8.2",
-    "h5py>=3.15.1",
+    "h5py>=3.15.1"
 ]
 
 [project.urls]
@@ -46,6 +46,8 @@ Download = "https://pypi.org/project/epochalypse/#files"
 # They are here now because hatch hasn't released support for them but plans to
 # in Mid November 2025.
 extra = [
+    "arviz>=0.22.0",
+    "corner",
     "matplotlib>=3.5.0",
     "pandas>=2.3.3",
     "gaiaunlimited @ git+https://github.com/gaia-unlimited/gaiaunlimited.git",
