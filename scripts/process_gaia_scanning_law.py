@@ -11,10 +11,9 @@ considered as a single scan event.
 
 For each sky position / HEALPix pixel, we store one row per transit:
 
-- bjd_time               float64  (TCB BJD relative to Gaia reference time)
+- bjd_time               float32  (TCB BJD relative to Gaia reference time)
 - scan_angle_deg         float32  (position angle, degrees)
 - parallax_factor_al     float32
-- parallax_factor_ac     float32
 
 In the input data file, the healpix pixel (hpx_pixel) is level 12. The output healpix
 resolution is set by the command-line "--nside" argument.
@@ -44,6 +43,7 @@ DTYPE = np.dtype(
         ("parallax_factor_al", "<f4"),
         ("parallax_factor_ac", "<f4"),
         ("healpix_pixel", "<i8"),  # HEALPix pixel index at the requested nside
+        ("fov", "<u1"),  # 1=preceding, 2=following
     ]
 )
 SAVE_COLUMNS = [
@@ -145,6 +145,8 @@ def process_scanning_law(
     base_healpix_level = 12
 
     new_level = hp.nside2order(nside)
+
+    # Convert to nested ordering for fast resolution change:
     tmp_idx = df["heal_pix"].to_numpy()
     new_healpix_idx = tmp_idx >> (2 * (base_healpix_level - new_level))
 
@@ -155,14 +157,21 @@ def process_scanning_law(
     data["scan_angle_deg"] = df["scan_angle"].to_numpy()
     data["parallax_factor_al"] = df["parallax_factor_al"].to_numpy()
     data["parallax_factor_ac"] = df["parallax_factor_ac"].to_numpy()
+    data["fov"] = df["fov"].to_numpy()
     data["healpix_pixel"] = new_healpix_idx
 
-    # Only keep unique scans / transits per pixel
-    change_idx = np.where(np.diff(data["healpix_pixel"]) != 0)[0]
-    unq_mask = np.concatenate(([0], change_idx + 1))
-    data = data[unq_mask]
+    per_fov = []
+    for fov in (1, 2):
+        fov_data = data[data["fov"] == fov]
+        fov_data = fov_data[np.argsort(fov_data["time_bjd"])]
 
-    return data[np.argsort(data["healpix_pixel"])]
+        # Only keep unique scans / transits per pixel
+        change_idx = np.where(np.diff(fov_data["healpix_pixel"]) != 0)[0]
+        unq_mask = np.concatenate(([0], change_idx + 1))
+        per_fov.append(fov_data[unq_mask])
+
+    scan_data = np.concatenate(per_fov)
+    return scan_data[np.argsort(scan_data["healpix_pixel"])]
 
 
 def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
@@ -226,6 +235,7 @@ def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
                     "bjd_min": bjd_range[0],
                     "bjd_max": bjd_range[1],
                     "healpix_level": hp.nside2order(nside),
+                    "healpix_ordering": "NESTED",
                 }
             )
 
@@ -256,7 +266,7 @@ def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
             idx_grp.create_dataset("starts", data=starts_arr)
             idx_grp.create_dataset("counts", data=scans_per_pixel)
 
-            ra, dec = hp.pix2ang(nside, unq_pix, lonlat=True, nest=False)
+            ra, dec = hp.pix2ang(nside, unq_pix, lonlat=True, nest=True)
             idx_grp.create_dataset("ra_deg", data=ra.astype(np.float32))
             idx_grp.create_dataset("dec_deg", data=dec.astype(np.float32))
 
