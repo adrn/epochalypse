@@ -3,7 +3,7 @@
 import equinox as eqx
 import jax
 import quaxed.numpy as jnp
-from unxt import Quantity
+from unxt import Quantity, ustrip
 
 
 class KeplerianOrientation(eqx.Module):
@@ -124,26 +124,21 @@ class KeplerianOrientation(eqx.Module):
 
         inner = (u_ + v_) * (u_ - v_)
         # Guard against small negative from roundoff
-        zero_with_units = Quantity(jnp.asarray(0.0), inner.unit)
-        inner = jnp.where(
-            jnp.asarray(inner) < jnp.asarray(zero_with_units), zero_with_units, inner
-        )
+        inner = jnp.where(inner < 0.0, 0.0, inner)
         a = jnp.sqrt(u_ + jnp.sqrt(inner))
 
         # From algebraic manipulation of T-I
-        cos_i = v_ / a**2
+        cos_i = ustrip("", v_ / a**2)
         cos_i = jnp.clip(cos_i, -1.0, 1.0)
 
         sin_i_squared = 1.0 - cos_i**2
-        sin_i = jnp.sqrt(
-            jnp.where(jnp.asarray(sin_i_squared) < 0.0, 0.0, sin_i_squared)
-        )
+        sin_i = jnp.sqrt(jnp.where(sin_i_squared < 0.0, 0.0, sin_i_squared))
         i = jnp.arctan2(sin_i, cos_i)  # i in [0, π]
 
         # Sums & differences of angles (Binnendijk paper referenced in above paper)
         # sp = (ω + Ω), sm = (ω - Ω)
-        sp = jnp.arctan2(B - F, A + G)
-        sm = jnp.arctan2(B + F, G - A)
+        sp = ustrip("rad", jnp.arctan2(B - F, A + G))
+        sm = ustrip("rad", jnp.arctan2(B + F, G - A))
 
         omega = jnp.mod(0.5 * (sp + sm), 2 * jnp.pi)
         Omega = jnp.mod(0.5 * (sp - sm), 2 * jnp.pi)
