@@ -80,12 +80,12 @@ class KeplerianOrientation(eqx.Module):
     ) -> "KeplerianOrientation":
         """Construct from angle values."""
         return cls(
-            sin_arg_peri=jnp.sin(arg_peri),
-            cos_arg_peri=jnp.cos(arg_peri),
-            sin_lon_asc_node=jnp.sin(lon_asc_node),
-            cos_lon_asc_node=jnp.cos(lon_asc_node),
-            sin_i=jnp.sin(inclination),
-            cos_i=jnp.cos(inclination),
+            sin_arg_peri=jnp.sin(Quantity.from_(arg_peri)),
+            cos_arg_peri=jnp.cos(Quantity.from_(arg_peri)),
+            sin_lon_asc_node=jnp.sin(Quantity.from_(lon_asc_node)),
+            cos_lon_asc_node=jnp.cos(Quantity.from_(lon_asc_node)),
+            sin_i=jnp.sin(Quantity.from_(inclination)),
+            cos_i=jnp.cos(Quantity.from_(inclination)),
         )
 
     @classmethod
@@ -119,6 +119,11 @@ class KeplerianOrientation(eqx.Module):
         semi_major_axis
             Recovered semi-major axis
         """
+        A = Quantity.from_(A)
+        B = Quantity.from_(B)
+        F = Quantity.from_(F)
+        G = Quantity.from_(G)
+
         u_ = (A**2 + B**2 + F**2 + G**2) / 2.0
         v_ = A * G - B * F
 
@@ -154,9 +159,9 @@ class KeplerianOrientation(eqx.Module):
 
         return (
             cls.from_angles(
-                arg_peri=omega,
-                lon_asc_node=Omega,
-                inclination=i,
+                arg_peri=Quantity(omega, "rad"),
+                lon_asc_node=Quantity(Omega, "rad"),
+                inclination=Quantity(i, "rad"),
             ),
             a,
         )
@@ -244,7 +249,7 @@ class KeplerianOrientation(eqx.Module):
         A, B, F, G
             The four Thiele-Innes constants.
         """
-        a = semi_major_axis
+        a = Quantity.from_(semi_major_axis)
         s_w = self.sin_arg_peri
         c_w = self.cos_arg_peri
         s_W = self.sin_lon_asc_node
