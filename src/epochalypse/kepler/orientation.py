@@ -143,10 +143,10 @@ class KeplerianOrientation(eqx.Module):
         # Sums & differences of angles (Binnendijk paper referenced in above paper)
         # sp = (ω + Ω), sm = (ω - Ω)
         # Using the identities:
-        # A + G = a(1 + cos(i))cos(ω + Ω)
-        # B - F = a(1 + cos(i))sin(ω + Ω)
-        # A - G = a(1 - cos(i))cos(ω - Ω)
-        # B + F = -a(1 - cos(i))sin(ω - Ω)
+        # A + G = a(1 + cos(i)) cos(ω + Ω)
+        # B - F = a(1 + cos(i)) sin(ω + Ω)
+        # A - G = a(1 - cos(i)) cos(ω - Ω)
+        # B + F = -a(1 - cos(i)) sin(ω - Ω)
         sp = ustrip("rad", jnp.arctan2(B - F, A + G))
         sm = ustrip("rad", jnp.arctan2(-(B + F), A - G))
 
