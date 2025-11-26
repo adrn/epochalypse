@@ -31,28 +31,44 @@ class KeplerianOrientation(eqx.Module):
     cos_i: float = 1.0
 
     def __check_init__(self) -> None:
-        if not jnp.isclose(
-            self.sin_arg_peri**2 + self.cos_arg_peri**2,
-            1.0,
-            atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
-        ):
-            raise ValueError("Argument of pericenter sin/cos values are not normalized")
+        x = jnp.array(self.sin_arg_peri**2 + self.cos_arg_peri**2)
+        eqx.error_if(
+            x,
+            jnp.logical_not(
+                jnp.isclose(
+                    x,
+                    1.0,
+                    atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
+                )
+            ),
+            "Argument of pericenter sin/cos values are not normalized",
+        )
 
-        if not jnp.isclose(
-            self.sin_lon_asc_node**2 + self.cos_lon_asc_node**2,
-            1.0,
-            atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
-        ):
-            raise ValueError(
-                "Longitude of ascending node sin/cos values are not normalized"
-            )
+        x = jnp.array(self.sin_lon_asc_node**2 + self.cos_lon_asc_node**2)
+        eqx.error_if(
+            x,
+            jnp.logical_not(
+                jnp.isclose(
+                    x,
+                    1.0,
+                    atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
+                )
+            ),
+            "Longitude of ascending node sin/cos values are not normalized",
+        )
 
-        if not jnp.isclose(
-            self.sin_i**2 + self.cos_i**2,
-            1.0,
-            atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
-        ):
-            raise ValueError("Inclination sin/cos values are not normalized")
+        x = jnp.array(self.sin_i**2 + self.cos_i**2)
+        eqx.error_if(
+            x,
+            jnp.logical_not(
+                jnp.isclose(
+                    x,
+                    1.0,
+                    atol=jnp.finfo(float).eps,  # type: ignore[no-untyped-call]
+                )
+            ),
+            "Inclination sin/cos values are not normalized",
+        )
 
     @classmethod
     def from_angles(
@@ -83,7 +99,18 @@ class KeplerianOrientation(eqx.Module):
         """Construct orientation from Thiele-Innes constants.
 
         Inverts the Thiele-Innes constants to recover (ω, Ω, i, a).
-        Note: There's a sign ambiguity in inclination (i or π-i).
+        This loosely follows Appendix A of https://arxiv.org/abs/2206.05726
+        but my convention for angles is different. For this implementation:
+
+        0 < i < π/2
+        0 < ω < 2π
+        0 < Ω < 2π
+
+        whereas the paper linked above assumes:
+
+        0 < i < π
+        0 < ω < 2π
+        0 < Ω < π
 
         Returns
         -------
@@ -92,24 +119,49 @@ class KeplerianOrientation(eqx.Module):
         semi_major_axis
             Recovered semi-major axis
         """
-        # Semi-major axis from the norm
-        a = jnp.sqrt(A**2 + B**2 + F**2 + G**2)
+        u_ = (A**2 + B**2 + F**2 + G**2) / 2.0
+        v_ = A * G - B * F
 
-        # Inclination
-        cos_i = (A * G - B * F) / a**2
-        sin_i = jnp.sqrt(1 - cos_i**2)  # assumes 0 < i < π
+        inner = (u_ + v_) * (u_ - v_)
+        # Guard against small negative from roundoff
+        zero_with_units = Quantity(jnp.asarray(0.0), inner.unit)
+        inner = jnp.where(
+            jnp.asarray(inner) < jnp.asarray(zero_with_units), zero_with_units, inner
+        )
+        a = jnp.sqrt(u_ + jnp.sqrt(inner))
 
-        # Longitude of ascending node
-        Omega = jnp.arctan2(B - F, A + G)
+        # From algebraic manipulation of T-I
+        cos_i = v_ / a**2
+        cos_i = jnp.clip(cos_i, -1.0, 1.0)
 
-        # Argument of pericenter
-        omega = jnp.arctan2(-A + G, B + F)
+        sin_i_squared = 1.0 - cos_i**2
+        sin_i = jnp.sqrt(
+            jnp.where(jnp.asarray(sin_i_squared) < 0.0, 0.0, sin_i_squared)
+        )
+        i = jnp.arctan2(sin_i, cos_i)  # i in [0, π]
+
+        # Sums & differences of angles (Binnendijk paper referenced in above paper)
+        # sp = (ω + Ω), sm = (ω - Ω)
+        sp = jnp.arctan2(B - F, A + G)
+        sm = jnp.arctan2(B + F, G - A)
+
+        omega = jnp.mod(0.5 * (sp + sm), 2 * jnp.pi)
+        Omega = jnp.mod(0.5 * (sp - sm), 2 * jnp.pi)
+
+        # Enforce 0 < i < π/2, Ω ∈ [0, 2π) ---
+        # If i > π/2, use the symmetry:
+        # (i, Ω, ω) -> (π - i, Ω + π, ω + π)
+        mask = i > (0.5 * jnp.pi)
+
+        i = jnp.where(mask, jnp.pi - i, i)
+        Omega = jnp.where(mask, jnp.mod(Omega + jnp.pi, 2 * jnp.pi), Omega)
+        omega = jnp.where(mask, jnp.mod(omega + jnp.pi, 2 * jnp.pi), omega)
 
         return (
             cls.from_angles(
                 arg_peri=omega,
                 lon_asc_node=Omega,
-                inclination=jnp.arctan2(sin_i, cos_i),
+                inclination=i,
             ),
             a,
         )
@@ -185,7 +237,7 @@ class KeplerianOrientation(eqx.Module):
         """Compute Thiele-Innes constants (A, B, F, G).
 
         These constants linearize the relationship between orbital position
-        and sky-plane projection.
+        and sky-plane projection. See Appendix A of: https://arxiv.org/abs/2206.05726
 
         Parameters
         ----------
@@ -204,9 +256,10 @@ class KeplerianOrientation(eqx.Module):
         c_W = self.cos_lon_asc_node
         c_i = self.cos_i
 
+        # Eq A.1 of https://arxiv.org/abs/2206.05726
         A = a * (c_w * c_W - s_w * s_W * c_i)
         B = a * (c_w * s_W + s_w * c_W * c_i)
-        F = a * (-s_w * c_W - c_w * s_W * c_i)
-        G = a * (-s_w * s_W + c_w * c_W * c_i)
+        F = -a * (s_w * c_W + c_w * s_W * c_i)
+        G = -a * (s_w * s_W - c_w * c_W * c_i)
 
         return A, B, F, G
