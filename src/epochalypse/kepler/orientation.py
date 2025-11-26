@@ -142,20 +142,21 @@ class KeplerianOrientation(eqx.Module):
 
         # Sums & differences of angles (Binnendijk paper referenced in above paper)
         # sp = (ω + Ω), sm = (ω - Ω)
+        # Using the identities:
+        # A + G = a(1 + cos(i))cos(ω + Ω)
+        # B - F = a(1 + cos(i))sin(ω + Ω)
+        # A - G = a(1 - cos(i))cos(ω - Ω)
+        # B + F = -a(1 - cos(i))sin(ω - Ω)
         sp = ustrip("rad", jnp.arctan2(B - F, A + G))
-        sm = ustrip("rad", jnp.arctan2(B + F, G - A))
+        sm = ustrip("rad", jnp.arctan2(-(B + F), A - G))
 
+        # Normalize sp to [0, 2π) for consistency
+        sp = jnp.mod(sp, 2 * jnp.pi)
+        # Keep sm in [-π, π] as returned by arctan2
+
+        # Compute ω and Ω, then normalize to [0, 2π)
         omega = jnp.mod(0.5 * (sp + sm), 2 * jnp.pi)
         Omega = jnp.mod(0.5 * (sp - sm), 2 * jnp.pi)
-
-        # Enforce 0 < i < π/2, Ω ∈ [0, 2π) ---
-        # If i > π/2, use the symmetry:
-        # (i, Ω, ω) -> (π - i, Ω + π, ω + π)
-        mask = i > (0.5 * jnp.pi)
-
-        i = jnp.where(mask, jnp.pi - i, i)
-        Omega = jnp.where(mask, jnp.mod(Omega + jnp.pi, 2 * jnp.pi), Omega)
-        omega = jnp.where(mask, jnp.mod(omega + jnp.pi, 2 * jnp.pi), omega)
 
         return (
             cls.from_angles(
