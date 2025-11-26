@@ -26,7 +26,6 @@ python process_gaia_scanning_law_healpix_index.py \
     --level 6
 """
 
-from multiprocessing import shared_memory
 from pathlib import Path
 
 import h5py
@@ -78,34 +77,6 @@ dr_bjd_ranges = {
     "dr4": GAIA_DR4_BJD_RANGE,
     "dr5": GAIA_DR5_BJD_RANGE,
 }
-
-
-def _pixel_worker(
-    pix: int, data_meta: tuple[str, tuple[int, ...], object]
-) -> tuple[int, np.ndarray] | tuple[int, None]:
-    """Get unique transits (scans) a given HEALPix pixel.
-
-    This worker function collects all unique scans for a given HEALPix pixel by
-    collapsing scan samples into discrete transits. That is, the Gaia-provided scan law
-    samples the fov pointing every 10 seconds, but, for a given HEALPix pixel, we
-    shouldn't count another scan until it returns for another focal plane transit.
-    """
-    data_name, data_shape, data_dtype_spec = data_meta
-    data_dtype = np.dtype(data_dtype_spec)  # type: ignore[call-overload]
-    data_mem = shared_memory.SharedMemory(name=data_name)
-
-    try:
-        data = np.ndarray(data_shape, dtype=data_dtype, buffer=data_mem.buf)
-
-        # Select all scan samples for this pixel
-        mask = data["healpix_pixel"] == pix
-        if not np.any(mask):
-            return pix, None
-
-        return pix, data[mask][SAVE_COLUMNS].astype(SAVE_DTYPE)
-
-    finally:
-        data_mem.close()
 
 
 def process_scanning_law(
