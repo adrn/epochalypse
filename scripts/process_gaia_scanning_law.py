@@ -39,11 +39,21 @@ from astropy.time import Time
 # Data model / HDF5 utilities
 DTYPE = np.dtype(
     [
-        ("bjd_time", "<f8"),
+        ("time_bjd", "<f8"),
         ("scan_angle_deg", "<f4"),
         ("parallax_factor_al", "<f4"),
         ("parallax_factor_ac", "<f4"),
+        ("healpix_pixel", "<i8"),  # HEALPix pixel index at the requested nside
     ]
+)
+SAVE_COLUMNS = [
+    "time_bjd",
+    "scan_angle_deg",
+    "parallax_factor_al",
+    # "parallax_factor_ac",
+]
+SAVE_DTYPE = np.dtype(
+    [("time_bjd", "<f4"), ("scan_angle_deg", "<f4"), ("parallax_factor_al", "<f4")]
 )
 
 # Gaia archive time origin: 2010-01-01T00:00 TCB
@@ -65,8 +75,8 @@ GAIA_DR5_BJD_RANGE = (2456863.939, 2460690.762)
 
 dr_bjd_ranges = {
     "dr3": GAIA_DR3_BJD_RANGE,
-    "dr4": GAIA_DR4_BJD_RANGE,
-    "dr5": GAIA_DR5_BJD_RANGE,
+    # "dr4": GAIA_DR4_BJD_RANGE,
+    # "dr5": GAIA_DR5_BJD_RANGE,
 }
 
 
@@ -92,7 +102,7 @@ def _pixel_worker(
         if not np.any(mask):
             return pix, None
 
-        return pix, data[mask].copy()
+        return pix, data[mask][SAVE_COLUMNS].astype(SAVE_DTYPE)
 
     finally:
         data_mem.close()
@@ -133,17 +143,17 @@ def process_scanning_law(
     df = df[time_window_mask].reset_index(drop=True)
 
     # The commanded scan law file provides healpix pixels for each scan sample, but with
-    # level 12 resolution.
-    base_healpix_level = hp.order2nside(12)
+    # level 12 resolution. We want to convert the pixels to the requested nside.
+    base_healpix_level = 12
 
     new_level = hp.nside2order(nside)
-    tmp_idx = df.heal_pix_fov1.to_numpy()
+    tmp_idx = df["heal_pix"].to_numpy()
     new_healpix_idx = tmp_idx >> (2 * (base_healpix_level - new_level))
     unq_pix = np.unique(new_healpix_idx)
 
     # Prepare structured array for all valid samples; per-pixel selection happens
     # inside the multiprocessing workers.
-    data = np.zeros(pix.size, dtype=DTYPE)
+    data = np.zeros(new_healpix_idx.size, dtype=DTYPE)
     data["time_bjd"] = df["bjd"].to_numpy()
     data["scan_angle_deg"] = df["scan_angle"].to_numpy()
     data["parallax_factor_al"] = df["parallax_factor_al"].to_numpy()
@@ -267,7 +277,13 @@ def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
             # Write to HDF5 per pixel
             for p, arr in per_pixel_arrays.items():
                 key = str(p)
-                pix_grp.create_dataset(key, data=arr, dtype=DTYPE)
+                pix_grp.create_dataset(
+                    key,
+                    data=arr,
+                    dtype=SAVE_DTYPE,
+                    compression="gzip",
+                    compression_opts=7,
+                )
                 counts[p] = arr.shape[0]
 
             # Write map-level info:
