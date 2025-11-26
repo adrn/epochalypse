@@ -27,7 +27,7 @@ python process_gaia_scanning_law_healpix_index.py \
     --level 6
 """
 
-from multiprocessing import Pool, shared_memory
+from multiprocessing import shared_memory
 from pathlib import Path
 
 import h5py
@@ -75,8 +75,8 @@ GAIA_DR5_BJD_RANGE = (2456863.939, 2460690.762)
 
 dr_bjd_ranges = {
     "dr3": GAIA_DR3_BJD_RANGE,
-    # "dr4": GAIA_DR4_BJD_RANGE,
-    # "dr5": GAIA_DR5_BJD_RANGE,
+    "dr4": GAIA_DR4_BJD_RANGE,
+    "dr5": GAIA_DR5_BJD_RANGE,
 }
 
 
@@ -109,7 +109,7 @@ def _pixel_worker(
 
 
 def process_scanning_law(
-    df: pd.DataFrame, *, nside: int, bjd_range: tuple[float, float], nest: bool = False
+    df: pd.DataFrame, *, nside: int, bjd_range: tuple[float, float]
 ) -> dict[int, np.ndarray]:
     """Convert a DataFrame into per-pixel structured arrays of unique scans.
 
@@ -125,8 +125,6 @@ def process_scanning_law(
         HEALPix nside parameter
     bjd_range : tuple[float, float]
         (min, max) BJD range to include
-    nest : bool
-        HEALPix ordering (False=RING, True=NESTED)
 
     Returns
     -------
@@ -149,7 +147,6 @@ def process_scanning_law(
     new_level = hp.nside2order(nside)
     tmp_idx = df["heal_pix"].to_numpy()
     new_healpix_idx = tmp_idx >> (2 * (base_healpix_level - new_level))
-    unq_pix = np.unique(new_healpix_idx)
 
     # Prepare structured array for all valid samples; per-pixel selection happens
     # inside the multiprocessing workers.
@@ -160,41 +157,17 @@ def process_scanning_law(
     data["parallax_factor_ac"] = df["parallax_factor_ac"].to_numpy()
     data["healpix_pixel"] = new_healpix_idx
 
-    # Copy data to shared memory for multiprocessing
-    data_shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
-    data_buf = np.ndarray(data.shape, dtype=data.dtype, buffer=data_shm.buf)
-    data_buf[:] = data
+    # Only keep unique scans / transits per pixel
+    change_idx = np.where(np.diff(data["healpix_pixel"]) != 0)[0]
+    unq_mask = np.concatenate(([0], change_idx + 1))
+    data = data[unq_mask]
 
-    data_meta = (
-        data_shm.name,
-        data.shape,
-        data.dtype.descr,
-    )
-
-    try:
-        with Pool() as pool:
-            result_arrays = pool.starmap(
-                _pixel_worker,
-                ((int(p), data_meta) for p in unq_pix),  # tasks
-            )
-    finally:
-        data_shm.close()
-        data_shm.unlink()
-
-    per_pixel: dict[int, np.ndarray] = {}
-    for pix_id, res_arr in result_arrays:
-        if res_arr is None or res_arr.size == 0:
-            continue
-        per_pixel[int(pix_id)] = res_arr
-
-    return per_pixel
+    return data[np.argsort(data["healpix_pixel"])]
 
 
 def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
     if not hp.isnsideok(nside):
         raise RuntimeError(f"nside must be a power of two >= 1: got {nside}")
-
-    nest = False  # Gaia uses RING by default
 
     if scan_law_file.name.endswith("csv"):
         # Load entire CSV
@@ -252,46 +225,40 @@ def main(scan_law_file: Path, output_path: Path, nside: int) -> None:
                     "gaia_time_origin_bjd": GAIA_TIME_ORIGIN_JD,
                     "bjd_min": bjd_range[0],
                     "bjd_max": bjd_range[1],
-                    "nside": nside,
-                    "time_scale": "TCB",
-                    "units_ra": "deg",
-                    "units_dec": "deg",
-                    "units_scan_angle": "deg",
+                    "healpix_level": hp.nside2order(nside),
                 }
             )
 
-            pix_grp = h5f.require_group("pix")
-            counts: dict[int, int] = {}
+            data_new_level = process_scanning_law(df, nside=nside, bjd_range=bjd_range)
 
-            print("Identifying unique scans...")
-            per_pixel_arrays = process_scanning_law(
-                df, nside=nside, bjd_range=bjd_range, nest=nest
+            unq_pix, scans_per_pixel = np.unique(
+                data_new_level["healpix_pixel"], return_counts=True
+            )
+            total_scans = np.sum(scans_per_pixel)
+            print(f"Found {total_scans:,} unique scans across {len(unq_pix):,} pixels")
+
+            print("Writing dataset to HDF5...")
+            h5f.create_dataset(
+                "scans",
+                data=data_new_level,
+                dtype=SAVE_DTYPE,
+                compression="gzip",
+                compression_opts=9,
             )
 
-            total_scans = sum(len(arr) for arr in per_pixel_arrays.values())
-            print(
-                f"Found {total_scans:,} unique scans across {len(per_pixel_arrays):,} "
-                "pixels"
-            )
-            print("Writing pixel datasets to HDF5...")
-            # Write to HDF5 per pixel
-            for p, arr in per_pixel_arrays.items():
-                key = str(p)
-                pix_grp.create_dataset(
-                    key,
-                    data=arr,
-                    dtype=SAVE_DTYPE,
-                    compression="gzip",
-                    compression_opts=7,
-                )
-                counts[p] = arr.shape[0]
-
-            # Write map-level info:
+            # Metadata for fast indexing:
             idx_grp = h5f.create_group("index")
-            pixels = np.array(sorted(counts.keys()), dtype="<i8")
-            nrows = np.array([counts[p] for p in pixels], dtype="<i8")
-            idx_grp.create_dataset("pixels", data=pixels)
-            idx_grp.create_dataset("scans_per_pixel", data=nrows)
+            idx_grp.create_dataset("pixels", data=unq_pix)
+
+            starts_arr = np.zeros_like(scans_per_pixel)
+            starts_arr[1:] = np.cumsum(scans_per_pixel[:-1])
+
+            idx_grp.create_dataset("starts", data=starts_arr)
+            idx_grp.create_dataset("counts", data=scans_per_pixel)
+
+            ra, dec = hp.pix2ang(nside, unq_pix, lonlat=True, nest=False)
+            idx_grp.create_dataset("ra_deg", data=ra.astype(np.float32))
+            idx_grp.create_dataset("dec_deg", data=dec.astype(np.float32))
 
         print(f"Wrote {output_file!s}")
 
