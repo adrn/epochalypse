@@ -179,6 +179,7 @@ precision = 2
       "healpy.*",
       "h5py.*",
       "pandas.*",
+      "pooch.*",
     ]
 
 [tool.ruff]
