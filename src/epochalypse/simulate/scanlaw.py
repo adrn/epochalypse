@@ -69,6 +69,11 @@ class GaiaReducedCommandedScanLaw(AbstractGaiaScanLaw):
             )
         return pathlib.Path(SCANLAW_DATA_POOCH.fetch(fname))
 
+    def read_metadata(self) -> dict:
+        """Read and return the metadata from the scan law file."""
+        with h5py.File(self.file_path, "r") as f:
+            return dict(f.attrs)
+
     def load_scans_for_healpix(self, healpix_pixel: int) -> np.ndarray:
         """Load the scan data for a specific healpix pixel.
 
