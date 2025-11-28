@@ -11,5 +11,5 @@ Working with *Gaia* epoch data.
 You can install this package into your preferred Python environment using pip:
 
 ```bash
-$ pip install epochalypse
+$ pip install git+https://github.com/adrn/epochalypse
 ```
