@@ -74,9 +74,9 @@ class KeplerianOrientation(eqx.Module):
     def from_angles(
         cls,
         /,
-        arg_peri: Quantity["angle"] = Quantity(0, "rad"),
-        lon_asc_node: Quantity["angle"] = Quantity(0, "rad"),
-        inclination: Quantity["angle"] = Quantity(0, "rad"),
+        arg_peri: Quantity["angle"] = Quantity.from_(0.0, "rad"),
+        lon_asc_node: Quantity["angle"] = Quantity.from_(0.0, "rad"),
+        inclination: Quantity["angle"] = Quantity.from_(0.0, "rad"),
     ) -> "KeplerianOrientation":
         """Construct from angle values."""
         return cls(
@@ -129,7 +129,7 @@ class KeplerianOrientation(eqx.Module):
 
         inner = (u_ + v_) * (u_ - v_)
         # Guard against small negative from roundoff
-        inner = jnp.where(inner < 0.0, 0.0, inner)
+        inner = jnp.where(inner < 0.0, Quantity.from_(0.0, inner.unit), inner)
         a = jnp.sqrt(u_ + jnp.sqrt(inner))
 
         # From algebraic manipulation of T-I
@@ -170,17 +170,19 @@ class KeplerianOrientation(eqx.Module):
     @property
     def arg_peri(self) -> Quantity["angle"]:
         """Argument of pericenter (ω)."""
-        return jnp.arctan2(self.sin_arg_peri, self.cos_arg_peri)
+        return Quantity.from_(jnp.arctan2(self.sin_arg_peri, self.cos_arg_peri), "rad")
 
     @property
     def lon_asc_node(self) -> Quantity["angle"]:
         """Longitude of ascending node (Ω)."""
-        return jnp.arctan2(self.sin_lon_asc_node, self.cos_lon_asc_node)
+        return Quantity.from_(
+            jnp.arctan2(self.sin_lon_asc_node, self.cos_lon_asc_node), "rad"
+        )
 
     @property
     def inclination(self) -> Quantity["angle"]:
         """Inclination (i)."""
-        return jnp.arctan2(self.sin_i, self.cos_i)
+        return Quantity.from_(jnp.arctan2(self.sin_i, self.cos_i), "rad")
 
     @property
     def rotation_matrix(self) -> jax.Array:
