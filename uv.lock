@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[manifest]
+overrides = [
+    { name = "coordinax", git = "https://github.com/GalacticDynamics/coordinax.git" },
+    { name = "quaxed", git = "https://github.com/GalacticDynamics/quaxed.git" },
+]
+
 [[package]]
 name = "accessible-pygments"
 version = "0.0.5"
@@ -713,7 +719,6 @@ dependencies = [
     { name = "jaxtyping" },
     { name = "numpyro" },
     { name = "pooch" },
-    { name = "quaxed" },
     { name = "unxt" },
 ]
 
@@ -783,7 +788,6 @@ requires-dist = [
     { name = "pytest-raises", marker = "extra == 'tests'" },
     { name = "pytest-randomly", marker = "extra == 'tests'" },
     { name = "pytest-xdist", marker = "extra == 'tests'" },
-    { name = "quaxed", specifier = ">=0.10.2" },
     { name = "ruff", marker = "extra == 'style'" },
     { name = "setuptools", marker = "extra == 'extra'" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = "~=8.0" },
@@ -2549,8 +2553,8 @@ wheels = [
 
 [[package]]
 name = "quaxed"
-version = "0.10.2"
-source = { registry = "https://pypi.org/simple" }
+version = "0.10.3"
+source = { git = "https://github.com/GalacticDynamics/quaxed.git#1f72f0e30ff293a5a335d03927cb9a8fc902953a" }
 dependencies = [
     { name = "equinox" },
     { name = "jax" },
@@ -2558,10 +2562,6 @@ dependencies = [
     { name = "optype" },
     { name = "plum-dispatch" },
     { name = "quax" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/32/3d/79857c170ff6ddfb5fb590a563c93837aa1e2f41c5016ccbc85e8d5c7c7b/quaxed-0.10.2.tar.gz", hash = "sha256:7260533a5212a109bd61d29e7789c5d7bd1fd16a2a1ab0d2d821b47043945c2e", size = 134153, upload-time = "2025-10-19T15:12:51.663Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/09/9a54bd735dfefe7c02577345bd68502a9a8111c9cf41d6816c1dfcffb939/quaxed-0.10.2-py3-none-any.whl", hash = "sha256:b8e6453ada2947c66ae62a1df9e47bcda402961318b5719de7d16d7dfe957f8a", size = 28924, upload-time = "2025-10-19T15:12:50.149Z" },
 ]
 
 [[package]]
@@ -3080,7 +3080,7 @@ wheels = [
 
 [[package]]
 name = "unxt"
-version = "1.7.2"
+version = "1.7.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "astropy" },
@@ -3099,9 +3099,9 @@ dependencies = [
     { name = "xmmutablemap" },
     { name = "zeroth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/16/2d48f2f8d50fa8fe7ae10a7d5f489299b2742ba65c9d5360a47b2d95d253/unxt-1.7.2.tar.gz", hash = "sha256:e9d01cc292f8271a0956ca39901d8a02111e909ac4a170e33bdae1373568d93f", size = 886644, upload-time = "2025-10-22T00:24:55.553Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/97/ad2f92a851b7efc80e9aa07a9f1a4ffd4d8b43b6dd1c6e01110362e94e53/unxt-1.7.7.tar.gz", hash = "sha256:b41463a0768cc39a96dc5f56748a8e22cb8dc3aff5015bc21054cabc1e1a7e36", size = 886755, upload-time = "2025-11-17T02:50:57.566Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/0c/66a053460d40c676842f4fe0034f0105d90029c55be15998d5908c742dc4/unxt-1.7.2-py3-none-any.whl", hash = "sha256:83e92efd1023abefa42542861cb1167ade9322e24036c7cc68c374b6a47ba929", size = 74300, upload-time = "2025-10-22T00:24:52.353Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/81/9816966d2b203a9e8871103aeaea3c3d6b7227a4d8af90c8f354ea27d0b5/unxt-1.7.7-py3-none-any.whl", hash = "sha256:1c5ccf57f4bfd3474e0546733932301d92f26ba65878d85f6345c5541c359943", size = 74432, upload-time = "2025-11-17T02:50:56.014Z" },
 ]
 
 [[package]]

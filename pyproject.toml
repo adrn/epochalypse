@@ -25,13 +25,20 @@ dependencies = [
     "jax>=0.8.0",
     "jaxoplanet>=0.1.0",
     "jaxtyping>=0.3.3",
-    "quaxed>=0.10.2",
+    # "quaxed>=0.10.2",
     "unxt>=1.7.2",
     "numpyro>=0.15.0",
     "equinox>=0.13.2",
     "healpy>=1.18.1",
     "pooch>=1.8.2",
     "h5py>=3.15.1",
+    # "coordinax>=0.23.1",
+]
+
+[tool.uv]
+override-dependencies = [
+    "quaxed @ git+https://github.com/GalacticDynamics/quaxed.git",
+    "coordinax @ git+https://github.com/GalacticDynamics/coordinax.git",
 ]
 
 [project.urls]
@@ -166,20 +173,21 @@ precision = 2
     ignore_missing_imports = true
     module = [
       "astropy.*",
+      "coordinax.*",
       "equinox.*",
+      "h5py.*",
+      "healpy.*",
       "hypothesis.*",
       "jax.*",
+      "jaxoplanet.*",
       "jaxtyping.*",
       "numpy.*",
+      "pandas.*",
       "plum.*",
+      "pooch.*",
       "quax.*",
       "quaxed.*",
       "unxt.*",
-      "jaxoplanet.*",
-      "healpy.*",
-      "h5py.*",
-      "pandas.*",
-      "pooch.*",
     ]
 
 [tool.ruff]
