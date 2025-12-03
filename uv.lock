@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 overrides = [
     { name = "coordinax", git = "https://github.com/GalacticDynamics/coordinax.git" },
+    { name = "numpyro-ext", git = "https://github.com/dfm/numpyro-ext.git" },
     { name = "quaxed", git = "https://github.com/GalacticDynamics/quaxed.git" },
 ]
 
