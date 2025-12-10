@@ -476,6 +476,29 @@ wheels = [
 ]
 
 [[package]]
+name = "coordinax"
+version = "0.23.2.dev6+g44cc2ff02"
+source = { git = "https://github.com/GalacticDynamics/coordinax.git#44cc2ff027327a428f19aa6b00421a6a9cecb905" }
+dependencies = [
+    { name = "astropy" },
+    { name = "beartype" },
+    { name = "dataclassish" },
+    { name = "equinox" },
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "jaxtyping" },
+    { name = "optional-dependencies" },
+    { name = "plum-dispatch" },
+    { name = "quax" },
+    { name = "quax-blocks" },
+    { name = "quaxed" },
+    { name = "typing-extensions" },
+    { name = "unxt" },
+    { name = "wadler-lindig" },
+    { name = "xmmutablemap" },
+]
+
+[[package]]
 name = "corner"
 version = "2.2.3"
 source = { registry = "https://pypi.org/simple" }
@@ -712,13 +735,16 @@ wheels = [
 name = "epochalypse"
 source = { editable = "." }
 dependencies = [
+    { name = "coordinax" },
     { name = "equinox" },
     { name = "h5py" },
     { name = "healpy" },
     { name = "jax" },
     { name = "jaxoplanet" },
     { name = "jaxtyping" },
+    { name = "jedi" },
     { name = "numpyro" },
+    { name = "numpyro-ext" },
     { name = "pooch" },
     { name = "unxt" },
 ]
@@ -731,7 +757,9 @@ build = [
 dev = [
     { name = "hatch" },
     { name = "ipykernel" },
+    { name = "ipywidgets" },
     { name = "pre-commit" },
+    { name = "ruff" },
 ]
 docs = [
     { name = "myst-parser" },
@@ -765,6 +793,7 @@ tests = [
 [package.metadata]
 requires-dist = [
     { name = "arviz", marker = "extra == 'extra'", specifier = ">=0.22.0" },
+    { name = "coordinax", specifier = ">=0.23.1" },
     { name = "corner", marker = "extra == 'extra'" },
     { name = "equinox", specifier = ">=0.13.2" },
     { name = "gaiaunlimited", marker = "extra == 'extra'", git = "https://github.com/gaia-unlimited/gaiaunlimited.git" },
@@ -772,12 +801,15 @@ requires-dist = [
     { name = "hatch", marker = "extra == 'dev'" },
     { name = "healpy", specifier = ">=1.18.1" },
     { name = "ipykernel", marker = "extra == 'dev'" },
+    { name = "ipywidgets", marker = "extra == 'dev'" },
     { name = "jax", specifier = ">=0.8.0" },
     { name = "jaxoplanet", specifier = ">=0.1.0" },
     { name = "jaxtyping", specifier = ">=0.3.3" },
+    { name = "jedi", specifier = "==0.19.1" },
     { name = "matplotlib", marker = "extra == 'extra'", specifier = ">=3.5.0" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=4.0" },
     { name = "numpyro", specifier = ">=0.15.0" },
+    { name = "numpyro-ext", specifier = ">=0.0.4" },
     { name = "pandas", marker = "extra == 'extra'", specifier = ">=2.3.3" },
     { name = "pip-audit", marker = "extra == 'build'" },
     { name = "pooch", specifier = ">=1.8.2" },
@@ -789,6 +821,7 @@ requires-dist = [
     { name = "pytest-raises", marker = "extra == 'tests'" },
     { name = "pytest-randomly", marker = "extra == 'tests'" },
     { name = "pytest-xdist", marker = "extra == 'tests'" },
+    { name = "ruff", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'style'" },
     { name = "setuptools", marker = "extra == 'extra'" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = "~=8.0" },
@@ -1181,6 +1214,22 @@ wheels = [
 ]
 
 [[package]]
+name = "ipywidgets"
+version = "8.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "comm" },
+    { name = "ipython" },
+    { name = "jupyterlab-widgets" },
+    { name = "traitlets" },
+    { name = "widgetsnbextension" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/ae/c5ce1edc1afe042eadb445e95b0671b03cee61895264357956e61c0d2ac0/ipywidgets-8.1.8.tar.gz", hash = "sha256:61f969306b95f85fba6b6986b7fe45d73124d1d9e3023a8068710d47a22ea668", size = 116739, upload-time = "2025-11-01T21:18:12.393Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/6d/0d9848617b9f753b87f214f1c682592f7ca42de085f564352f10f0843026/ipywidgets-8.1.8-py3-none-any.whl", hash = "sha256:ecaca67aed704a338f88f67b1181b58f821ab5dc89c1f0f5ef99db43c1c2921e", size = 139808, upload-time = "2025-11-01T21:18:10.956Z" },
+]
+
+[[package]]
 name = "is-annotated"
 version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1299,14 +1348,14 @@ wheels = [
 
 [[package]]
 name = "jedi"
-version = "0.19.2"
+version = "0.19.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "parso" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/3a/79a912fbd4d8dd6fbb02bf69afd3bb72cf0c729bb3063c6f4498603db17a/jedi-0.19.2.tar.gz", hash = "sha256:4770dc3de41bde3966b02eb84fbcf557fb33cce26ad23da12c742fb50ecb11f0", size = 1231287, upload-time = "2024-11-11T01:41:42.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/99/99b493cec4bf43176b678de30f81ed003fd6a647a301b9c927280c600f0a/jedi-0.19.1.tar.gz", hash = "sha256:cf0496f3651bc65d7174ac1b7d043eff454892c708a87d1b683e57b569927ffd", size = 1227821, upload-time = "2023-10-02T09:20:39.728Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/5a/9cac0c82afec3d09ccd97c8b6502d48f165f9124db81b4bcb90b4af974ee/jedi-0.19.2-py2.py3-none-any.whl", hash = "sha256:a8ef22bde8490f57fe5c7681a3c83cb58874daf72b4784de3cce5b6ef6edb5b9", size = 1572278, upload-time = "2024-11-11T01:41:40.175Z" },
+    { url = "https://files.pythonhosted.org/packages/20/9f/bc63f0f0737ad7a60800bfd472a4836661adae21f9c2535f3957b1e54ceb/jedi-0.19.1-py2.py3-none-any.whl", hash = "sha256:e983c654fe5c02867aef4cdfce5a2fbb4a50adc0af145f70504238f18ef5e7e0", size = 1569361, upload-time = "2023-10-02T09:20:35.754Z" },
 ]
 
 [[package]]
@@ -1357,6 +1406,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/02/49/9d1284d0dc65e2c757b74c6687b6d319b02f822ad039e5c512df9194d9dd/jupyter_core-5.9.1.tar.gz", hash = "sha256:4d09aaff303b9566c3ce657f580bd089ff5c91f5f89cf7d8846c3cdf465b5508", size = 89814, upload-time = "2025-10-16T19:19:18.444Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/e7/80988e32bf6f73919a113473a604f5a8f09094de312b9d52b79c2df7612b/jupyter_core-5.9.1-py3-none-any.whl", hash = "sha256:ebf87fdc6073d142e114c72c9e29a9d7ca03fad818c5d300ce2adc1fb0743407", size = 29032, upload-time = "2025-10-16T19:19:16.783Z" },
+]
+
+[[package]]
+name = "jupyterlab-widgets"
+version = "3.0.16"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/2d/ef58fed122b268c69c0aa099da20bc67657cdfb2e222688d5731bd5b971d/jupyterlab_widgets-3.0.16.tar.gz", hash = "sha256:423da05071d55cf27a9e602216d35a3a65a3e41cdf9c5d3b643b814ce38c19e0", size = 897423, upload-time = "2025-11-01T21:11:29.724Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl", hash = "sha256:45fa36d9c6422cf2559198e4db481aa243c7a32d9926b500781c830c80f7ecf8", size = 914926, upload-time = "2025-11-01T21:11:28.008Z" },
 ]
 
 [[package]]
@@ -1861,6 +1919,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/02/7c/5d1b55401b023b58f792483c71690315d4d5cd1653fd3631fa5bcbd68601/numpyro-0.19.0.tar.gz", hash = "sha256:bbf5b772a6ba8b7a79448fa6787afb069e5eb2dff8295078c3ec04d3e6276742", size = 404421, upload-time = "2025-08-05T10:26:33.055Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/31/9b5da5995988437756bc3f1eead2e314d8916259875c6924cb41692f2b41/numpyro-0.19.0-py3-none-any.whl", hash = "sha256:1063a2c131a0785719e13c8e55f1b82e41850d814df149418097531f4dbdeda8", size = 370906, upload-time = "2025-08-05T10:26:31.35Z" },
+]
+
+[[package]]
+name = "numpyro-ext"
+version = "0.0.5.dev6+g06ce7fb5c"
+source = { git = "https://github.com/dfm/numpyro-ext.git#06ce7fb5cad8ecdf29e0451a5ee4c9d7f35f4ae0" }
+dependencies = [
+    { name = "numpyro" },
 ]
 
 [[package]]
@@ -3305,6 +3371,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "widgetsnbextension"
+version = "4.0.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/f4/c67440c7fb409a71b7404b7aefcd7569a9c0d6bd071299bf4198ae7a5d95/widgetsnbextension-4.0.15.tar.gz", hash = "sha256:de8610639996f1567952d763a5a41af8af37f2575a41f9852a38f947eb82a3b9", size = 1097402, upload-time = "2025-11-01T21:15:55.178Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/0e/fa3b193432cfc60c93b42f3be03365f5f909d2b3ea410295cf36df739e31/widgetsnbextension-4.0.15-py3-none-any.whl", hash = "sha256:8156704e4346a571d9ce73b84bee86a29906c9abfd7223b7228a28899ccf3366", size = 2196503, upload-time = "2025-11-01T21:15:53.565Z" },
 ]
 
 [[package]]

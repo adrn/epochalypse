@@ -9,3 +9,5 @@ NTime = Real[Quantity["time"], "n"]  # type: ignore[type-arg]
 NVelocity = Real[Quantity["speed"], "n"]  # type: ignore[type-arg]
 NFloatArray = Float[jax.Array, "n"]
 NIntArray = Int[jax.Array, "n"]
+
+DimlessOrArray = Quantity["dimensionless"] | jax.Array

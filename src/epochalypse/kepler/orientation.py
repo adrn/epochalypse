@@ -91,10 +91,10 @@ class KeplerianOrientation(eqx.Module):
     @classmethod
     def from_thiele_innes(
         cls,
-        A: Quantity["length"],
-        B: Quantity["length"],
-        F: Quantity["length"],
-        G: Quantity["length"],
+        A: Quantity["length"] | Quantity["angle"],
+        B: Quantity["length"] | Quantity["angle"],
+        F: Quantity["length"] | Quantity["angle"],
+        G: Quantity["length"] | Quantity["angle"],
     ) -> tuple["KeplerianOrientation", Quantity["length"]]:
         """Construct orientation from Thiele-Innes constants.
 
@@ -235,8 +235,8 @@ class KeplerianOrientation(eqx.Module):
         return jnp.array([[r11, r12, r13], [r21, r22, r23], [r31, r32, r33]])
 
     def thiele_innes_constants(
-        self, semi_major_axis: Quantity["length"]
-    ) -> tuple[Quantity["length"], ...]:
+        self, semi_major_axis: Quantity["length"] | Quantity["angle"] | None = None
+    ) -> tuple[Quantity["length"] | Quantity["angle"] | jax.Array, ...]:
         """Compute Thiele-Innes constants (A, B, F, G).
 
         These constants linearize the relationship between orbital position
@@ -252,7 +252,11 @@ class KeplerianOrientation(eqx.Module):
         A, B, F, G
             The four Thiele-Innes constants.
         """
-        a = Quantity.from_(semi_major_axis)
+        a = (
+            jnp.array(1.0)
+            if semi_major_axis is None
+            else Quantity.from_(semi_major_axis)
+        )
         s_w = self.sin_arg_peri
         c_w = self.cos_arg_peri
         s_W = self.sin_lon_asc_node
