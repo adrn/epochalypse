@@ -22,7 +22,7 @@ classifiers = [
 # TODO: add keywords
 keywords = []
 dependencies = [
-    "jax>=0.8.0",
+    "jax[cuda12]==0.8.1",
     "jaxoplanet>=0.1.0",
     "jaxtyping>=0.3.3",
     "quaxed>=0.10.2",
