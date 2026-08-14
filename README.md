@@ -23,9 +23,9 @@ Just run the notebook top to bottom to reproduce a fit for either system, or cha
 
 ## Getting the simulated data
 
-The simulated data products (`outputs/data/`, including `simulated_astrometry.h5`) are not committed to this repository. Download them here:
+The simulated data products (`outputs/data/`, including `simulated_astrometry.h5`) are not committed to this repository. The current version (as of August 14th, 2026) can be downloaded from here (please note this catalog is still in development and subject to change!):
 
-**[Simulated Gaia DR4 astrometry data](https://drive.google.com/file/d/1zkYvkW7aPWtcN7Mu9fgsH9mIOr7rLHEp/view?usp=sharing)**
+**[Simulated Gaia DR4 astrometry data](https://drive.google.com/file/d/1HKK3-_GU_-micGgTHkSUt_Wl47KqXRsF/view?usp=sharing)**
 
 Unzip/place the contents so that `outputs/data/simulated_astrometry.h5` (and the accompanying CSVs) sit at that path relative to the repo root — this is what `fit_astrometric_orbits.ipynb` and the other notebooks expect.
 
