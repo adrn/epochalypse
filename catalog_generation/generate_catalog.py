@@ -41,16 +41,20 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-import astropy.units as u
-from astropy.constants import M_earth, M_jup
-
 # The repo root holds src/ and outputs/; resolve it from this file so the
 # script runs identically from anywhere.
 ROOT = next(p for p in Path(__file__).resolve().parents
             if (p / "src" / "epochalypse_fitting.py").exists())
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "src"))
 
-from pipeline.config import (AstrometrySettings, CatalogConfig, FigureSettings,
+# Physical and mission constants, all derived from astropy in one place and
+# shared with the analysis code in src/ -- never restated here.
+from epochalypse_constants import (DAYS_PER_YEAR, DR4_BASELINE_YEARS,   # noqa: E402
+                                   GAIA_EPOCH_TCB_JD, MARS_IN_MJUP,
+                                   MAX_COMPANION_MASS_MJUP, MJUP_IN_MSUN,
+                                   RSUN_IN_AU)
+from pipeline.config import (AstrometrySettings, CatalogConfig, FigureSettings,  # noqa: E402
                              Paths, PlanetPriors, PopulationSpec, Seeds,
                              StarSelection)
 
@@ -80,23 +84,16 @@ STAR_SELECTION = StarSelection(
 )
 
 # --- companion priors -----------------------------------------------------
-# Mars mass in Jupiter masses, the bottom of the companion mass prior.
-# Computed rather than typed so the log-uniform draw matches the released
-# populations exactly.
-MARS_MASS_MJUP = float((0.107 * M_earth).to(u.M_jup).value)     # 3.3666e-04
-# Msun per Mjup, straight from astropy; used for the mass ratios in the
-# two-companion stability screen.
-MJUP_IN_MSUN_ASTROPY = float(M_jup.to(u.M_sun).value)           # 9.5459e-04
-
+# Unit conversions come from `epochalypse_constants` (astropy); the numbers
+# below are the choices.
 PLANET_PRIORS = PlanetPriors(
-    # semi-major axis: log-uniform. At 0.1 AU the period is 5 d for the
-    # lightest star in the catalog (0.078 Msun) and 16 d at the median 0.55.
-    a_min_au=0.1,
+    # semi-major axis: log-uniform from 0.01 to 100.0
+    a_min_au=0.01,
     a_max_au=100.0,
 
-    # companion mass: log-uniform, Mars mass up to the brown-dwarf regime
-    mass_min_mjup=MARS_MASS_MJUP,
-    mass_max_mjup=80.0,
+    # companion mass: log-uniform, Mars mass up to the hydrogen-burning limit
+    mass_min_mjup=MARS_IN_MJUP,             # 1 M_Mars = 3.3668e-04 M_Jup
+    mass_max_mjup=MAX_COMPANION_MASS_MJUP,  # 80 M_Jup
 
     # eccentricity: uniform
     ecc_min=0.0,
@@ -110,7 +107,7 @@ PLANET_PRIORS = PlanetPriors(
     coplanar_probability=0.5,
 
     # detectability filter (applies only to the high-SNR populations)
-    baseline_years=5.5,        # DR4 observing baseline; sets a_crit
+    baseline_years=DR4_BASELINE_YEARS,   # 5.5 yr; sets a_crit
     snr_total_min=10.0,        # keep companions with SNR_total >= this
     snr_draw_batch=4096,
     snr_max_draws=8_000_000,
@@ -121,20 +118,18 @@ PLANET_PRIORS = PlanetPriors(
     resonance_tolerance=0.05,       # within 5% in period ratio counts as near
     max_stability_retries=1000,
 
-    # Msun per Mjup. Two slightly different values are in play historically;
-    # both are kept as-is so regenerated populations reproduce the released
-    # draws exactly. Worth unifying, but only alongside a resimulation.
-    mjup_in_msun_prior=9.5458e-4,                  # astrometric signature alpha
-    mjup_in_msun_stability=MJUP_IN_MSUN_ASTROPY,   # mass ratios mu1, mu2
+    # one Msun-per-Mjup for the signature alpha, Kepler's third law, and the
+    # stability mass ratios (was three slightly different hand-typed values)
+    mjup_in_msun=MJUP_IN_MSUN,      # 9.545942e-04
 )
 
 # --- epoch astrometry -----------------------------------------------------
 ASTROMETRY = AstrometrySettings(
-    gaia_epoch_tcb_jd=2457936.875,   # DR4 reference epoch; epochs centre here
-    days_per_year=365.25,
-    enable_float64=True,             # required to match the released noise draws
-    rsun_to_au=0.00465047,
-    mjup_to_msun=0.000954588,        # population CSV (Mjup) -> simulator (Msun)
+    gaia_epoch_tcb_jd=GAIA_EPOCH_TCB_JD,  # 2457936.875 JD (TCB)
+    days_per_year=DAYS_PER_YEAR,          # 365.25, the Julian year
+    enable_float64=True,             # float32 draws would change the noise realization
+    rsun_to_au=RSUN_IN_AU,           # 4.650467e-03
+    mjup_to_msun=MJUP_IN_MSUN,       # population CSV (Mjup) -> simulator (Msun)
     n_dof_five_param=5,
     n_dof_other=6,
     params_solved_five_param=31,
@@ -198,7 +193,7 @@ FIGURES = FigureSettings(
     # schematic: the two-companion high-SNR shortfall, split into
     # (no stable pair in the retry budget, no companion above the S/N floor)
     schematic_two_companion_drop_split=(1, 1),
-    mars_mass_mjup=MARS_MASS_MJUP,   # quotes the mass prior in Mars masses
+    mars_mass_mjup=MARS_IN_MJUP,     # quotes the mass prior in Mars masses
 )
 
 # --- seeds ----------------------------------------------------------------
