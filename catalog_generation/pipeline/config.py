@@ -21,35 +21,39 @@ from pathlib import Path
 class PopulationSpec:
     """One population of simulated systems.
 
-    Populations are of two kinds:
-
-    * **generated** (``derive_from is None``) -- drawn and simulated. All three
-      are drawn from the unbiased prior; there is no detectability rejection.
-    * **derived** (``derive_from`` names a generated population) -- a view of a
-      generated population, selected after the fact as its top
-      ``high_snr_fraction`` by recorded ``SNR_tot``. Nothing is simulated for a
-      derived population; it costs one quantile of a column.
-
-    That split is the point of the redesign: at ~4 million stars, rejection
-    sampling to a fixed S/N threshold is both expensive and irreversible, while
-    a quantile selection is cheap and leaves the threshold an analysis choice.
+    name
+        On-disk key, e.g. ``1_companion_detectable``. Used for the population
+        CSV, the per-system epoch directory, and the exported HDF5 file.
+    label
+        Display label used in prose/figures ("random" / "high-SNR"), kept
+        separate from `name` because the two vocabularies differ.
+    n_companions
+        0, 1, or 2. The 0-companion control is drawn straight from the stellar
+        catalog and has no population CSV of its own.
+    filter_snr
+        If True, companions are rejection-sampled until the period-suppressed
+        *total* detectability S/N clears `PlanetPriors.snr_total_min`.
+    seed_key
+        String hashed with the master seed to derive this population's RNG
+        stream. Kept at the historical `<n>planet_<snrfilter|nosnrfilter>`
+        spelling so regenerating reproduces the released draws exactly; the
+        population rename was a rename, not a resimulation.
     """
 
     name: str
     label: str
     n_companions: int
-    derive_from: str | None = None
-    high_snr_fraction: float | None = None
-
-    @property
-    def is_generated(self) -> bool:
-        return self.derive_from is None
+    filter_snr: bool
+    seed_key: str | None
 
     @property
     def csv_name(self) -> str:
         return f"{self.name}.csv"
 
 
+# --------------------------------------------------------------------------
+# Paths
+# --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Paths:
     """Every file the pipeline reads or writes."""
@@ -63,29 +67,16 @@ class Paths:
     # outputs
     data_dir: Path               # outputs/data
     figure_dir: Path             # outputs/figures
-    stars_csv: Path              # stage 1 product (parent stellar sample)
-    epochs_dir: Path             # sharded epoch tables, one subdir per population
+    stars_csv: Path              # stage 1 product
+    epochs_dir: Path             # per-system epoch CSVs, one subdir per population
     injected_solutions_csv: Path  # truth table across all populations
     bundle_h5: Path              # optional single-file repack
-
-    # per-source lookup indices, built once and memory-mapped by every worker
-    # (a 4-million-star scan law is far too large to load per process)
-    index_dir: Path
 
     def systems_h5(self, population: str) -> Path:
         return self.data_dir / f"simulated_astrometry_{population}_systems.h5"
 
     def population_csv(self, population: str) -> Path:
         return self.data_dir / f"{population}.csv"
-
-    def shard_dir(self, population: str) -> Path:
-        return self.epochs_dir / population
-
-    def shard_epochs(self, population: str, shard: int, n_shards: int) -> Path:
-        return self.shard_dir(population) / f"epochs_{shard:05d}_of_{n_shards:05d}.parquet"
-
-    def shard_truths(self, population: str, shard: int, n_shards: int) -> Path:
-        return self.shard_dir(population) / f"truths_{shard:05d}_of_{n_shards:05d}.parquet"
 
 
 # --------------------------------------------------------------------------
@@ -152,13 +143,11 @@ class PlanetPriors:
     # coplanar (shared inclination and ascending node) or drawn independently.
     coplanar_probability: float
 
-    # --- detectability metric (recorded per companion, never used to reject) ---
-    # SNR_tot = sqrt(N_DR4) * (alpha / sigma_single) / (1 + (P/T_baseline)^2)
-    # is written to the catalog so a high-S/N sample can be selected downstream.
+    # --- detectability (used only when a population sets filter_snr) ---
     baseline_years: float         # DR4 observing baseline; sets a_crit
-    # proposals per batch in the (Roche / stability) rejection loop
-    draw_batch: int
-    max_draws: int                # give up on a star after this many proposals
+    snr_total_min: float          # keep companions with SNR_total >= this
+    snr_draw_batch: int           # proposals per rejection-sampling batch
+    snr_max_draws: int            # give up on a star after this many proposals
 
     # --- two-companion stability screen ---
     hill_stability_factor: float  # unstable if delta < factor * sqrt(3)
@@ -254,32 +243,9 @@ class FigureSettings:
     # in the generation log, not the CSVs, so it is stated here; if it stops
     # matching the catalog the figure falls back to a combined count.
     schematic_two_companion_drop_split: tuple[int, int]
-    # fraction of a random population kept as its high-SNR view; quoted in the
-    # schematic so the figure states how the selection was made
-    high_snr_fraction: float
     # Mars mass in Jupiter masses, so the schematic can quote the bottom of the
     # mass prior in Mars masses the way the paper does.
     mars_mass_mjup: float
-
-
-# --------------------------------------------------------------------------
-# Parallel execution
-# --------------------------------------------------------------------------
-@dataclass(frozen=True)
-class ShardingSettings:
-    """How the source list is split across independent workers.
-
-    A source is assigned to a shard by hashing its Gaia source id, so the
-    partition is a pure function of the id: no worker needs to know the global
-    ordering, shards can be run in any order on any machine, and re-running one
-    shard reproduces it exactly.
-    """
-
-    n_shards: int                # default partition count
-    compression: str             # parquet codec, e.g. "zstd"
-    # flush the buffer every N systems so a worker's peak memory stays bounded
-    # no matter how many sources land in its shard
-    flush_every: int
 
 
 # --------------------------------------------------------------------------
@@ -287,14 +253,9 @@ class ShardingSettings:
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Seeds:
-    """Master seeds.
-
-    Every per-system stream is derived as
-    ``blake2s(master : population : gaia_source_id)`` -- keyed on the *source
-    id*, never on a row index. That is what makes the pipeline parallelizable:
-    a star's companions and noise realization depend only on its own id, so any
-    subset of stars can be generated in any order, split across any number of
-    workers, and re-run individually, all reproducing the same catalog."""
+    """Master seeds. Per-population and per-system streams are derived from
+    these by hashing (blake2s), so they are stable across processes and
+    independent of Python's hash randomization."""
 
     planets: int
     astrometry: int
@@ -310,7 +271,6 @@ class CatalogConfig:
     priors: PlanetPriors
     astrometry: AstrometrySettings
     figures: FigureSettings
-    sharding: ShardingSettings
     seeds: Seeds
     populations: tuple[PopulationSpec, ...] = field(default_factory=tuple)
 
@@ -320,16 +280,6 @@ class CatalogConfig:
                 return spec
         known = ", ".join(spec.name for spec in self.populations)
         raise KeyError(f"unknown population {name!r}; configured: {known}")
-
-    @property
-    def generated(self) -> tuple[PopulationSpec, ...]:
-        """Populations that are actually drawn and simulated."""
-        return tuple(spec for spec in self.populations if spec.is_generated)
-
-    @property
-    def derived(self) -> tuple[PopulationSpec, ...]:
-        """Populations that are a selection over a generated one."""
-        return tuple(spec for spec in self.populations if not spec.is_generated)
 
     def select(self, names: list[str] | None) -> tuple[PopulationSpec, ...]:
         """Populations to run: all of them, or the named subset in config order."""
