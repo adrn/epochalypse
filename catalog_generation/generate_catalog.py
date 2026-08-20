@@ -56,7 +56,7 @@ from epochalypse_constants import (DAYS_PER_YEAR, DR4_BASELINE_YEARS,   # noqa: 
                                    RSUN_IN_AU)
 from pipeline.config import (AstrometrySettings, CatalogConfig, FigureSettings,  # noqa: E402
                              Paths, PlanetPriors, PopulationSpec, Seeds,
-                             StarSelection)
+                             ShardingSettings, StarSelection)
 
 # ==========================================================================
 # CONFIGURATION -- every choice the catalog depends on
@@ -87,9 +87,17 @@ STAR_SELECTION = StarSelection(
 # Unit conversions come from `epochalypse_constants` (astropy); the numbers
 # below are the choices.
 PLANET_PRIORS = PlanetPriors(
-    # semi-major axis: log-uniform from 0.01 to 100.0
-    a_min_au=0.01,
+    # semi-major axis: log-uniform. The floor is deliberately below anything
+    # physical -- the binding inner limit is the per-star Roche-lobe screen
+    # below, which cuts each system at its own separation and so leaves a
+    # smeared inner edge rather than a wall at a_min_au.
+    a_min_au=0.001,
     a_max_au=100.0,
+
+    # innermost separation: reject draws where the star would overflow its
+    # Roche lobe (Eggleton 1983); 1.0 = the bare limit, no safety margin
+    enforce_roche_lobe=True,
+    roche_lobe_safety_factor=1.0,
 
     # companion mass: log-uniform, Mars mass up to the hydrogen-burning limit
     mass_min_mjup=MARS_IN_MJUP,             # 1 M_Mars = 3.3668e-04 M_Jup
@@ -107,10 +115,11 @@ PLANET_PRIORS = PlanetPriors(
     coplanar_probability=0.5,
 
     # detectability filter (applies only to the high-SNR populations)
+    # the S/N metric is recorded per companion and never used to reject;
+    # a high-S/N sample is selected downstream by cutting on snr_total_*
     baseline_years=DR4_BASELINE_YEARS,   # 5.5 yr; sets a_crit
-    snr_total_min=10.0,        # keep companions with SNR_total >= this
-    snr_draw_batch=4096,
-    snr_max_draws=8_000_000,
+    draw_batch=256,            # proposals per Roche-rejection batch
+    max_draws=1_000_000,
 
     # two-companion stability screen
     hill_stability_factor=2.0,      # unstable if delta < 2 sqrt(3) Hill radii
@@ -139,6 +148,13 @@ ASTROMETRY = AstrometrySettings(
     hdf5_compression="gzip",
 )
 
+# --- high-SNR selection ---------------------------------------------------
+# The high-SNR populations are no longer generated: every population is drawn
+# from the unbiased prior, and the "high-SNR" set is the top slice of a random
+# population by recorded SNR_tot. Changing this re-selects instantly; it never
+# requires resimulating anything.
+HIGH_SNR_FRACTION = 0.01        # top 1% by SNR_tot
+
 # --- figures --------------------------------------------------------------
 # Master switch for the figure stage. False drops `figures` from the default
 # run; the stage still runs if it is named explicitly with --stages figures,
@@ -152,8 +168,8 @@ FIGURES = FigureSettings(
     figures=(
         "star_sky_scanlaw",              # parent sample over the DR4 scan law
         "population_schematic",          # selection funnel + population branching
-        "pop_diagnostics_1planet",       # one-companion prior distributions
-        "pop_diagnostics_2planet",       # two-companion prior distributions
+        "pop_diagnostics_1planet",       # one-companion: random vs high-SNR
+        "pop_diagnostics_2planet",       # two-companion: random vs high-SNR
         "companion_gallery",             # sample on-sky orbits per population
         "simulated_planets_mass_period",  # mass vs. period, coloured by alpha
     ),
@@ -190,10 +206,11 @@ FIGURES = FigureSettings(
     gallery_n_per_row=10,
     gallery_seed=18,
 
-    # schematic: the two-companion high-SNR shortfall, split into
-    # (no stable pair in the retry budget, no companion above the S/N floor)
-    schematic_two_companion_drop_split=(1, 1),
-    mars_mass_mjup=MARS_IN_MJUP,     # quotes the mass prior in Mars masses
+    # kept for the figure API; the schematic itself needs a redesign for the
+    # three-population structure and is not built here
+    schematic_two_companion_drop_split=(0, 0),   # unused: no generated drops
+    high_snr_fraction=HIGH_SNR_FRACTION,
+    mars_mass_mjup=MARS_IN_MJUP,
 )
 
 # --- seeds ----------------------------------------------------------------
@@ -203,32 +220,42 @@ SEEDS = Seeds(planets=42, astrometry=45)
 
 # --- populations ----------------------------------------------------------
 POPULATIONS = (
-    PopulationSpec("0_companion", "companion-free control",
-                   n_companions=0, filter_snr=False, seed_key=None),
-    PopulationSpec("1_companion_agnostic", "one companion, random",
-                   n_companions=1, filter_snr=False, seed_key="1planet_nosnrfilter"),
+    # --- generated: drawn from the unbiased prior and simulated ---
+    PopulationSpec("0_companion", "companion-free control", n_companions=0),
+    PopulationSpec("1_companion", "one companion, random", n_companions=1),
+    PopulationSpec("2_companion", "two companions, random", n_companions=2),
+    # --- derived: a selection over the above, nothing extra is simulated ---
     PopulationSpec("1_companion_detectable", "one companion, high-SNR",
-                   n_companions=1, filter_snr=True, seed_key="1planet_snrfilter"),
-    PopulationSpec("2_companion_agnostic", "two companions, random",
-                   n_companions=2, filter_snr=False, seed_key="2planet_nosnrfilter"),
+                   n_companions=1, derive_from="1_companion",
+                   high_snr_fraction=HIGH_SNR_FRACTION),
     PopulationSpec("2_companion_detectable", "two companions, high-SNR",
-                   n_companions=2, filter_snr=True, seed_key="2planet_snrfilter"),
+                   n_companions=2, derive_from="2_companion",
+                   high_snr_fraction=HIGH_SNR_FRACTION),
 )
 
-# Pipeline stages, in execution order. `figures` runs straight after `planets`
-# because it needs only stages 1-2, so the paper figures land without waiting on
-# the hours of epoch simulation. `repack` is opt-in.
-STAGES = ("stars", "planets", "figures", "astrometry", "export", "repack")
+# --- parallel execution ---------------------------------------------------
+# A source's shard is blake2s(gaia_source_id) % n_shards, so the partition needs
+# no coordination between workers. 512 shards over ~4M stars is ~8k sources per
+# shard: small enough to restart cheaply, large enough that JAX compilation is
+# amortized.
+SHARDING = ShardingSettings(
+    n_shards=512,
+    compression="zstd",
+    flush_every=2000,          # systems buffered before a parquet row-group flush
+)
+
+STAGES = ("stars", "index", "simulate", "merge", "select", "figures")
 DEFAULT_STAGES = tuple(stage for stage in STAGES
-                       if stage != "repack" and (stage != "figures" or MAKE_FIGURES))
+                       if stage != "figures" or MAKE_FIGURES)
 
 # ==========================================================================
 # END OF CONFIGURATION
 # ==========================================================================
 
 
-def build_config(output_root: Path) -> CatalogConfig:
+def build_config(output_root: Path | None = None) -> CatalogConfig:
     """Assemble the configuration above into one object for the stages."""
+    output_root = Path(output_root) if output_root is not None else OUTPUT_ROOT
     data_dir = output_root / "data"
     return CatalogConfig(
         paths=Paths(
@@ -240,6 +267,7 @@ def build_config(output_root: Path) -> CatalogConfig:
             figure_dir=output_root / "figures",
             stars_csv=data_dir / "stars.csv",
             epochs_dir=data_dir / "simulated_astrometry",
+            index_dir=data_dir / "index",
             injected_solutions_csv=data_dir / "injected_solutions_all.csv",
             bundle_h5=data_dir / "simulated_astrometry_bundle.h5",
         ),
@@ -247,6 +275,7 @@ def build_config(output_root: Path) -> CatalogConfig:
         priors=PLANET_PRIORS,
         astrometry=ASTROMETRY,
         figures=FIGURES,
+        sharding=SHARDING,
         seeds=SEEDS,
         populations=POPULATIONS,
     )
@@ -347,70 +376,123 @@ class WallClock:
 
 
 def run(config: CatalogConfig, stages, populations, *, overwrite, limit,
-        figures=None, timing_csv=None):
-    """Run the requested stages over the requested populations."""
-    from pipeline import astrometry as astro_stage
-    from pipeline import planets as planet_stage
+        figures=None, timing_csv=None, n_shards=None, shards=None, workers=1):
+    """Run the requested stages.
+
+    `simulate` is the parallel stage: it fans the source list out over shards,
+    each of which is an independent process writing its own parquet files.
+    """
+    from pipeline import sources as source_stage
     from pipeline import stars as star_stage
 
     clock = WallClock()
+    n_shards = n_shards or config.sharding.n_shards
+    population_names = [spec.name for spec in populations if spec.is_generated]
 
     if "stars" in stages:
         banner("STAGE  stars -- parent stellar sample")
         with clock.stage("stars"):
             star_stage.build_star_catalog(config, overwrite=overwrite)
 
-    if "planets" in stages:
-        banner("STAGE  planets -- companion populations")
-        with clock.stage("planets"):
+    if "index" in stages:
+        banner("STAGE  index -- per-source lookup indices")
+        with clock.stage("index"):
+            source_stage.build_indices(config, overwrite=overwrite)
+
+    if "simulate" in stages:
+        banner(f"STAGE  simulate -- {n_shards} shards x {len(population_names)} populations")
+        from run_shard import run_one_shard
+
+        wanted = list(range(n_shards)) if shards is None else list(shards)
+        with clock.stage("simulate"):
+            if workers > 1 and len(wanted) > 1:
+                # spawn: a forked process and JAX do not mix
+                import multiprocessing as mp
+
+                payloads = [{"shard": s, "n_shards": n_shards,
+                             "population_names": population_names,
+                             "output_root": config.paths.data_dir.parent,
+                             "limit": limit, "verbose": True} for s in wanted]
+                with mp.get_context("spawn").Pool(workers) as pool:
+                    results = pool.map(_run_shard_payload, payloads)
+            else:
+                results = [run_one_shard(s, n_shards, population_names,
+                                         config.paths.data_dir.parent,
+                                         limit=limit) for s in wanted]
+            total = sum(pop["n_systems"] for r in results for pop in r["populations"] if pop)
+            print(f"\n  {total:,} systems written across {len(wanted)} shard(s)")
+
+    if "merge" in stages:
+        banner("STAGE  merge -- one truth table per generated population")
+        with clock.stage("merge"):
             for spec in populations:
-                if spec.n_companions == 0:
-                    print(f"\n[{spec.name}] control population, no companions to draw")
+                if not spec.is_generated:
                     continue
-                print(f"\n[{spec.name}] {spec.label}")
                 with clock.item(spec.name):
-                    planet_stage.generate_population(config, spec,
-                                                     overwrite=overwrite, limit=limit)
+                    merge_truths(config, spec)
+
+    if "select" in stages:
+        banner("STAGE  select -- high-SNR views over the random populations")
+        from pipeline.figures import select_high_snr
+        with clock.stage("select"):
+            import pandas as pd
+
+            for spec in config.derived:
+                source = config.population(spec.derive_from)
+                merged = config.paths.data_dir / f"injected_solutions_{source.name}.parquet"
+                if not merged.exists():
+                    print(f"  {spec.name}: {merged} not found, skipping")
+                    continue
+                frame = pd.read_parquet(merged)
+                selected = select_high_snr(frame, spec.high_snr_fraction)
+                out = config.paths.data_dir / f"injected_solutions_{spec.name}.parquet"
+                selected.to_parquet(out, index=False,
+                                    compression=config.sharding.compression)
+                snr = selected[[c for c in ("snr_total_1", "snr_total_2")
+                                if c in selected.columns]].max(axis=1)
+                print(f"  {spec.name}: top {100 * spec.high_snr_fraction:g}% of "
+                      f"{len(frame):,} -> {len(selected):,} systems, "
+                      f"SNR_tot >= {snr.min():.1f} (median {snr.median():.1f})")
 
     if "figures" in stages:
-        banner("STAGE  figures -- catalog-generation figures")
+        banner("STAGE  figures -- catalog figures")
         from pipeline import figures as figure_stage
         with clock.stage("figures"):
             figure_stage.make_figures(config, figures)
-
-    if "astrometry" in stages:
-        banner("STAGE  astrometry -- per-epoch along-scan measurements")
-        with clock.stage("astrometry"):
-            scanlaw_df, sources_df = astro_stage.load_reference_tables(config)
-            for spec in populations:
-                print(f"\n[{spec.name}] {spec.label}")
-                with clock.item(spec.name):
-                    astro_stage.simulate_population(config, spec, scanlaw_df=scanlaw_df,
-                                                    sources_df=sources_df, limit=limit)
-            print("\ncombining truth tables")
-            with clock.item("combine truth tables"):
-                astro_stage.combine_truth_tables(config, config.populations)
-
-    if "export" in stages:
-        banner("STAGE  export -- one HDF5 file per population")
-        with clock.stage("export"):
-            for spec in populations:
-                print(f"\n[{spec.name}] {spec.label}")
-                with clock.item(spec.name):
-                    astro_stage.export_population_hdf5(config, spec, overwrite=overwrite)
-
-    if "repack" in stages:
-        banner("OPTIONAL  repack -- single shareable bundle")
-        import subprocess
-        script = Path(__file__).resolve().parent / "repack_simulated_astrometry.py"
-        with clock.stage("repack"):
-            subprocess.run([sys.executable, str(script), "--out",
-                            str(config.paths.bundle_h5)], check=True)
 
     clock.report()
     if timing_csv:
         clock.write_csv(timing_csv)
     return clock
+
+
+def _run_shard_payload(payload):
+    """Top-level so the spawn pool can pickle it."""
+    from run_shard import run_one_shard
+
+    return run_one_shard(**payload)
+
+
+def merge_truths(config: CatalogConfig, spec):
+    """Concatenate a population's shard truth tables into one parquet.
+
+    The epochs stay sharded -- that is the point of the layout -- but the truth
+    table is one row per system and is what analysis reads first, so it is worth
+    having whole.
+    """
+    import pandas as pd
+
+    shard_dir = config.paths.shard_dir(spec.name)
+    parts = sorted(shard_dir.glob("truths_*.parquet"))
+    if not parts:
+        print(f"  {spec.name}: no shard truth tables in {shard_dir}")
+        return None
+    frame = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
+    frame = frame.sort_values("gaia_source_id").reset_index(drop=True)
+    out = config.paths.data_dir / f"injected_solutions_{spec.name}.parquet"
+    frame.to_parquet(out, index=False, compression=config.sharding.compression)
+    print(f"  {spec.name}: {len(frame):,} systems from {len(parts)} shards -> {out}")
+    return frame
 
 
 def parse_args(argv=None):
@@ -433,6 +515,12 @@ def parse_args(argv=None):
     parser.add_argument("--limit", type=int,
                         help="cap the number of stars/systems per population "
                              "(smoke tests only -- it changes the catalog)")
+    parser.add_argument("--n-shards", type=int,
+                        help="number of shards to split the source list into "
+                             "(default: the configured value)")
+    parser.add_argument("--shards", help="only these shards, e.g. 0-31 or 0,4,9")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="local processes to run shards with")
     parser.add_argument("--timing-csv", type=Path, metavar="PATH",
                         help="also write the wall-clock breakdown to this CSV")
     parser.add_argument("--list", action="store_true",
@@ -457,7 +545,11 @@ def main(argv=None):
     print(f"populations   : {', '.join(spec.name for spec in populations)}")
     if "figures" in stages:
         print(f"figures       : {', '.join(args.figures or FIGURES.figures)}")
-    print(f"seeds         : planets={SEEDS.planets}, astrometry={SEEDS.astrometry}")
+    print(f"shards        : {args.n_shards or SHARDING.n_shards}"
+          + (f" (running {args.shards})" if args.shards else "")
+          + f", {args.workers} worker(s)")
+    print(f"seeds         : planets={SEEDS.planets}, astrometry={SEEDS.astrometry}"
+          "  (keyed on gaia_source_id)")
     if args.limit:
         print(f"LIMIT         : {args.limit} (smoke test -- not a release catalog)")
 
@@ -469,8 +561,13 @@ def main(argv=None):
     if missing:
         raise SystemExit("missing input files:\n  " + "\n  ".join(str(p) for p in missing))
 
+    from run_shard import parse_shards
+
     run(config, set(stages), populations, overwrite=args.overwrite,
-        limit=args.limit, figures=args.figures, timing_csv=args.timing_csv)
+        limit=args.limit, figures=args.figures, timing_csv=args.timing_csv,
+        n_shards=args.n_shards,
+        shards=parse_shards(args.shards) if args.shards else None,
+        workers=args.workers)
     return 0
 
 
