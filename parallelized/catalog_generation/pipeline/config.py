@@ -81,11 +81,11 @@ class Paths:
     def shard_dir(self, population: str) -> Path:
         return self.epochs_dir / population
 
-    def shard_epochs(self, population: str, shard: int, n_shards: int) -> Path:
-        return self.shard_dir(population) / f"epochs_{shard:05d}_of_{n_shards:05d}.parquet"
+    def shard_epochs(self, population: str, part: int, n_parts: int, tag: str = "") -> Path:
+        return self.shard_dir(population) / f"epochs_{tag}{part:05d}_of_{n_parts:05d}.parquet"
 
-    def shard_truths(self, population: str, shard: int, n_shards: int) -> Path:
-        return self.shard_dir(population) / f"truths_{shard:05d}_of_{n_shards:05d}.parquet"
+    def shard_truths(self, population: str, part: int, n_parts: int, tag: str = "") -> Path:
+        return self.shard_dir(population) / f"truths_{tag}{part:05d}_of_{n_parts:05d}.parquet"
 
 
 # --------------------------------------------------------------------------

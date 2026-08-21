@@ -121,8 +121,24 @@ def build_indices(config, *, overwrite=False, verbose=True):
         "scanlaw": str(config.paths.scanlaw_dr4),
         "n_sources": int(len(ids)),
         "n_transits": int(len(codes)),
+        # Integer task ids index into this list, so its content and order are
+        # part of the contract between a scheduler and the catalog. The
+        # checksum lets a worker assert it holds the same list the ids were
+        # issued against.
+        "source_list_checksum": source_list_checksum(ids.tolist()),
     }, indent=2))
     return {"stars": star_index, "scanlaw": scan_index}
+
+
+def source_list_checksum(ids) -> str:
+    """Fingerprint of the ordered source list."""
+    import hashlib
+
+    digest = hashlib.blake2s(digest_size=16)
+    for source_id in ids:
+        digest.update(str(source_id).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 # --------------------------------------------------------------------------
@@ -157,8 +173,45 @@ class SourceCatalog:
         return len(self._row_of)
 
     def ids(self):
-        """Every source id, in catalog order."""
+        """Every source id, in catalog order.
+
+        This ordering IS the integer task-id mapping: `--id 7` means
+        `ids()[7]`. It is fixed at index-build time and fingerprinted in
+        index_manifest.json, so a worker can prove it holds the same list the
+        ids were issued against.
+        """
         return list(self._row_of)
+
+    def id_at(self, index):
+        """The source id for integer task `index` (what --id refers to)."""
+        ids = self.ids()
+        if not 0 <= int(index) < len(ids):
+            raise IndexError(f"--id {index} out of range: the source list has "
+                             f"{len(ids):,} entries (0..{len(ids) - 1})")
+        return ids[int(index)]
+
+    def checksum(self):
+        """Fingerprint of this source list; compare against the manifest."""
+        return source_list_checksum(self.ids())
+
+    def verify_checksum(self):
+        """Raise if the source list no longer matches the one indexed.
+
+        Cheap insurance for a 1000-rank job: every rank asserts it works from
+        the same list, so a stale stars.csv on one node cannot silently shift
+        what `--id 7` means.
+        """
+        manifest = self.config.paths.index_dir / "index_manifest.json"
+        if not manifest.exists():
+            return None
+        expected = json.loads(manifest.read_text()).get("source_list_checksum")
+        actual = self.checksum()
+        if expected and expected != actual:
+            raise RuntimeError(
+                f"source list checksum mismatch: the index was built for {expected}, "
+                f"this catalog hashes to {actual}. Integer --id values from one "
+                "would point at different stars in the other; rebuild the indices.")
+        return actual
 
     def get(self, gaia_source_id):
         """One star's row as a Series. Raises KeyError if the id is unknown."""

@@ -189,12 +189,18 @@ class ShardWriter:
     many sources land in its shard.
     """
 
-    def __init__(self, config: CatalogConfig, spec: PopulationSpec, shard, n_shards):
+    def __init__(self, config: CatalogConfig, spec: PopulationSpec, shard, n_shards,
+                 tag: str = ""):
         self.config, self.spec = config, spec
         self.shard, self.n_shards = shard, n_shards
-        self.epochs_path = config.paths.shard_epochs(spec.name, shard, n_shards)
-        self.truths_path = config.paths.shard_truths(spec.name, shard, n_shards)
+        self.epochs_path = config.paths.shard_epochs(spec.name, shard, n_shards, tag)
+        self.truths_path = config.paths.shard_truths(spec.name, shard, n_shards, tag)
         self.epochs_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to .tmp and rename on success: a rank killed mid-write leaves no
+        # file at all rather than a truncated one that looks complete, so
+        # --skip-existing can trust that a present file is a finished file.
+        self._epochs_tmp = self.epochs_path.with_suffix(".parquet.tmp")
+        self._truths_tmp = self.truths_path.with_suffix(".parquet.tmp")
         self._epochs, self._truths = [], []
         self._epoch_writer = None
         self.n_systems = self.n_epochs = 0
@@ -218,7 +224,7 @@ class ShardWriter:
                                      preserve_index=False)
         if self._epoch_writer is None:
             self._epoch_writer = pq.ParquetWriter(
-                self.epochs_path, table.schema,
+                self._epochs_tmp, table.schema,
                 compression=self.config.sharding.compression)
         self._epoch_writer.write_table(table)
         self._epochs = []
@@ -227,9 +233,11 @@ class ShardWriter:
         self.flush()
         if self._epoch_writer is not None:
             self._epoch_writer.close()
+            self._epochs_tmp.replace(self.epochs_path)
         pd.DataFrame(self._truths).to_parquet(
-            self.truths_path, index=False,
+            self._truths_tmp, index=False,
             compression=self.config.sharding.compression)
+        self._truths_tmp.replace(self.truths_path)
         return {"population": self.spec.name, "shard": self.shard,
                 "n_systems": self.n_systems, "n_epochs": self.n_epochs,
                 "epochs": str(self.epochs_path), "truths": str(self.truths_path)}
