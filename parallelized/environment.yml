@@ -1,0 +1,36 @@
+# Environment for the epochalypse parallel pipeline.
+#
+#   conda env create -f environment.yml
+#   conda activate epochalypse
+#
+# On a cluster, build against the site MPI rather than the conda one: install
+# everything except mpi4py from here, then
+#   module load <site openmpi/mpich>
+#   MPICC=$(which mpicc) pip install --no-binary=mpi4py mpi4py
+# so that mpirun/srun and mpi4py agree on the same MPI. A conda-provided MPI
+# usually works for single-node testing and fails across nodes.
+name: epochalypse
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+
+  # core
+  - numpy
+  - pandas
+  - scipy
+  - pyarrow          # parquet shards + memory-mapped Arrow lookups
+  - astropy          # all physical constants
+
+  # simulation
+  - jax
+  - jaxlib
+  - jaxoplanet
+
+  # figures (not needed to generate the catalog)
+  - matplotlib
+  - healpy           # the sky-map figure only
+
+  # parallel execution -- optional; without it run_mpi.py runs as a single rank
+  - mpi4py
+  - openmpi          # drop this and use the site MPI on a cluster (see above)
