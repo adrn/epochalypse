@@ -105,6 +105,15 @@ class StarSelection:
     # (sig_AL is NaN) and so have no usable noise model. Dropping them here
     # keeps one clean parent sample shared by every population.
     require_sigma_al: bool
+    # G23H carries one row per DR2 cross-match, so a star with several matches
+    # appears more than once under the same gaia_source_id -- 22,497 of them in
+    # the 250 pc sample. The per-source lookup requires unique ids, so the
+    # duplicates are collapsed to one row per star. Only the *_dr2 / *_dr32
+    # columns differ within a group; everything the simulator reads (parallax,
+    # pmra_dr3, sig_AL, sig_cal, sig_att_radec, the transit counts, G) is
+    # identical, so the collapse changes no physics -- it only decides which
+    # source_id_dr2 is recorded alongside the star.
+    collapse_duplicate_source_ids: bool
 
 
 # --------------------------------------------------------------------------

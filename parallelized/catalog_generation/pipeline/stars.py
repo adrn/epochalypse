@@ -87,6 +87,18 @@ def build_star_catalog(config: CatalogConfig, *, overwrite=True) -> pd.DataFrame
     )
 
     stars = interpolated
+    if selection.collapse_duplicate_source_ids:
+        duplicated = stars[selection.source_id_col].duplicated().sum()
+        if duplicated:
+            # Keep the row with the smallest source_id_dr2 in each group -- a rule
+            # that does not depend on the order rows arrive in -- then restore the
+            # catalog's own ordering, because that ordering becomes the integer
+            # task-id mapping once the indices are built.
+            keep = stars.groupby(selection.source_id_col)["source_id_dr2"].idxmin()
+            stars = stars.loc[np.sort(keep.to_numpy())].copy()
+            print(f"  collapsed {duplicated:,} duplicate DR2 cross-match rows "
+                  f"-> {len(stars):,} unique sources")
+
     if selection.require_mass_radius:
         keep = stars["mass_interp"].notna() & stars["radius_interp"].notna()
         print(f"  dropped {int((~keep).sum())} stars outside the Pecaut & Mamajek range")
