@@ -81,6 +81,8 @@ STAR_SELECTION = StarSelection(
     require_mass_radius=True,
     # drop the handful of high-RUWE binaries with no sig_AL noise model
     require_sigma_al=True,
+    # G23H repeats a star once per DR2 cross-match; keep one row per source
+    collapse_duplicate_source_ids=True,
 )
 
 # --- companion priors -----------------------------------------------------
