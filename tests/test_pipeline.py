@@ -22,7 +22,7 @@ from epochalypse import config as C
 from epochalypse import planets as P
 from epochalypse import stars as S
 
-HERE = Path(__file__).resolve().parent
+REPO = Path(__file__).resolve().parents[1]     # tests/ -> the checkout
 
 
 def star(source_id, *, mass=0.55, radius=0.52):
@@ -42,8 +42,8 @@ def test_isolation():
              C.GOST_FOV_MAP, C.OUTPUT_ROOT, C.stars_csv(), C.index_dir(),
              C.truths("1_companion"), C.shard_epochs("2_companion", 3, 512)]
     for path in paths:
-        assert HERE in Path(path).parents or Path(path) == HERE, \
-            f"{path} escapes {HERE} -- inputs and outputs must stay in the checkout"
+        assert REPO in Path(path).parents or Path(path) == REPO, \
+            f"{path} escapes {REPO} -- inputs and outputs must stay in the checkout"
 
 
 def test_seeding():

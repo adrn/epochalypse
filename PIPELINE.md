@@ -27,7 +27,7 @@ is what records the versions a catalog was generated with.
 
 ```bash
 uv sync
-uv run python test_pipeline.py    # self-check; needs only the committed inputs
+uv run python tests/test_pipeline.py   # self-check; needs only the committed inputs
 ```
 
 `mpi4py` is deliberately not a default dependency: it has to be built against
@@ -225,7 +225,7 @@ epochalypse/
 ├── pyproject.toml              dependencies; uv.lock pins them
 ├── data/                       static inputs (see Setup)
 ├── outputs/                    generated: data/ (shards, indices, truth tables), figures/
-└── test_pipeline.py            self-check for the seeding, priors, and screens
+└── tests/test_pipeline.py      self-check for the seeding, priors, and screens
 ```
 
 ## Why the lookup layer exists
