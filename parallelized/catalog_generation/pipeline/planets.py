@@ -13,9 +13,9 @@ stars:
    rejection loop that dominated the cost of the old high-SNR populations and
    turns the threshold into an analysis choice.
 
-The rejection loop that remains is over *physical possibility* only: the star
-must fit inside its Roche lobe, and a two-companion pair must be non-crossing
-and Hill-stable.
+The rejection that remains is over *physical possibility* only: the star must
+fit inside its Roche lobe, and a two-companion pair must be non-crossing and
+Hill-stable.
 """
 from __future__ import annotations
 
@@ -23,7 +23,11 @@ import hashlib
 
 import numpy as np
 
-from .config import CatalogConfig, PopulationSpec, PlanetPriors
+from . import config as C
+
+# Bail-out for a star with no physically allowed orbit anywhere in the prior
+# (the Roche floor rejects ~15-25% of draws, so reaching this means unusable).
+MAX_DRAWS = 10_000
 
 
 # --------------------------------------------------------------------------
@@ -33,10 +37,6 @@ def system_seed(master_seed: int, population: str, gaia_source_id) -> int:
     """Stable uint32 seed for one (population, source) pair."""
     payload = f"{int(master_seed)}:{population}:{gaia_source_id}".encode("utf-8")
     return int.from_bytes(hashlib.blake2s(payload, digest_size=4).digest(), "little")
-
-
-def source_rng(master_seed: int, population: str, gaia_source_id):
-    return np.random.default_rng(system_seed(master_seed, population, gaia_source_id))
 
 
 # --------------------------------------------------------------------------
@@ -59,26 +59,27 @@ def eggleton_lobe_fraction(q):
     return 0.49 * q23 / (0.6 * q23 + np.log1p(q13))
 
 
-def roche_lobe_min_separation(radius_rsun, mstar_msun, mp_msun, *, factor, rsun_in_au):
+def roche_lobe_min_separation(radius_rsun, mstar_msun, mp_msun):
     """Smallest separation [AU] at which the star still fits inside its lobe."""
-    return factor * (radius_rsun * rsun_in_au) / eggleton_lobe_fraction(mstar_msun / mp_msun)
+    return (C.ROCHE_SAFETY_FACTOR * (radius_rsun * C.RSUN_IN_AU)
+            / eggleton_lobe_fraction(mstar_msun / mp_msun))
 
 
-def classify_with_resonance(mu1, mu2, a1, a2, e1, e2, priors: PlanetPriors):
+def classify_with_resonance(mu1, mu2, a1, a2, e1, e2):
     """unstable / likely_unstable / resonant_stable_possible / stable."""
     if a1 * (1 + e1) >= a2 * (1 - e2):
         return "unstable"
     hill_radius = ((mu1 + mu2) / 3) ** (1 / 3) * (a1 + a2) / 2
     delta = (a2 - a1) / hill_radius
-    near = any(near_first_order_resonance(a1, a2, j=j, tol=priors.resonance_tolerance)
-               for j in priors.resonance_orders)
-    if delta < priors.hill_stability_factor * np.sqrt(3):
+    near = any(near_first_order_resonance(a1, a2, j=j, tol=C.RESONANCE_TOLERANCE)
+               for j in C.RESONANCE_ORDERS)
+    if delta < C.HILL_STABILITY_FACTOR * np.sqrt(3):
         return "resonant_stable_possible" if near else "likely_unstable"
     return "stable"
 
 
 # --------------------------------------------------------------------------
-# Per-star noise, used for the recorded S/N metric
+# Per-star noise: one definition, used for both the S/N metric and the epochs
 # --------------------------------------------------------------------------
 def single_datum_sigma(n_good, n_fov, n_dof, sigma_calib, sigma_al):
     """Per-single-transit AL uncertainty [mas] implied by the DR3 solution."""
@@ -91,11 +92,11 @@ def single_datum_sigma(n_good, n_fov, n_dof, sigma_calib, sigma_al):
     return np.sqrt(mu_ueva_single / n_al_ave)
 
 
-def star_noise_terms(star, astrometry):
+def star_noise_terms(star):
     """(sigma_single [mas], n_dof) for one star row."""
-    n_dof = (astrometry.n_dof_five_param
-             if star["astrometric_params_solved_dr3"] == astrometry.params_solved_five_param
-             else astrometry.n_dof_other)
+    n_dof = (C.N_DOF_FIVE_PARAM
+             if star["astrometric_params_solved_dr3"] == C.PARAMS_SOLVED_FIVE_PARAM
+             else C.N_DOF_OTHER)
     sigma = single_datum_sigma(float(star["astrometric_n_good_obs_al_dr3"]),
                                float(star["astrometric_matched_transits_dr3"]),
                                n_dof, float(star["sig_cal"]), float(star["sig_AL"]))
@@ -105,98 +106,83 @@ def star_noise_terms(star, astrometry):
 # --------------------------------------------------------------------------
 # Stage 2, for one source
 # --------------------------------------------------------------------------
-def draw_companions(config: CatalogConfig, spec: PopulationSpec, star, *,
-                    n_transits, sigma_single):
+def draw_companions(population, star, *, n_transits, sigma_single):
     """Draw this star's companions. Returns a list of dicts (empty for the control).
 
     Raises RuntimeError if no physically allowed configuration is found within
     the draw budget, which the caller records as a skipped source.
     """
-    if spec.n_companions == 0:
+    n_companions = C.POPULATIONS[population]
+    if n_companions == 0:
         return []
 
-    priors = config.priors
-    rng = source_rng(config.seeds.planets, spec.name, star["gaia_source_id"])
+    rng = np.random.default_rng(
+        system_seed(C.SEED_PLANETS, population, star["gaia_source_id"]))
 
     mstar = float(star["mass_interp"])
     rstar = float(star["radius_interp"])
     parallax = float(star["parallax"])
-    rsun_in_au = config.astrometry.rsun_to_au
 
-    log_a = (np.log10(priors.a_min_au), np.log10(priors.a_max_au))
-    log_m = (np.log10(priors.mass_min_mjup), np.log10(priors.mass_max_mjup))
-    a_crit = (priors.baseline_years**2 * mstar) ** (1.0 / 3.0)
+    log_a = (np.log10(C.A_MIN_AU), np.log10(C.A_MAX_AU))
+    log_m = (np.log10(C.MASS_MIN_MJUP), np.log10(C.MASS_MAX_MJUP))
+    a_crit = (C.BASELINE_YEARS**2 * mstar) ** (1.0 / 3.0)
 
     def draw_one():
         """One companion from the prior, rejecting Roche-lobe-violating draws."""
-        drawn = 0
-        while drawn < priors.max_draws:
-            batch = priors.draw_batch
-            sma = 10 ** rng.uniform(*log_a, size=batch)
-            mass = 10 ** rng.uniform(*log_m, size=batch)
-            mass_msun = mass * priors.mjup_in_msun
-
-            accept = np.ones(batch, dtype=bool)
-            if priors.enforce_roche_lobe:
-                accept &= sma >= roche_lobe_min_separation(
-                    rstar, mstar, mass_msun,
-                    factor=priors.roche_lobe_safety_factor, rsun_in_au=rsun_in_au)
-            hits = np.where(accept)[0]
-            if hits.size:
-                i = hits[0]
-                # S/N is recorded, not used to accept or reject
-                alpha = mass_msun[i] / (mstar + mass_msun[i]) * sma[i] * parallax
-                snr_single = alpha / sigma_single if sigma_single and np.isfinite(sigma_single) else np.nan
-                snr_eff = snr_single / (1.0 + (sma[i] / a_crit) ** 3)
-                snr_total = np.sqrt(n_transits) * snr_eff if n_transits else np.nan
-                return dict(sma=float(sma[i]), mass_pl=float(mass[i]),
-                            alpha_mas=float(alpha), snr_single=float(snr_single),
-                            snr_eff=float(snr_eff), snr_total=float(snr_total))
-            drawn += batch
-        raise RuntimeError(f"no Roche-allowed companion within {priors.max_draws} draws")
+        for _ in range(MAX_DRAWS):
+            sma = 10 ** rng.uniform(*log_a)
+            mass = 10 ** rng.uniform(*log_m)
+            mass_msun = mass * C.MJUP_IN_MSUN
+            if sma < roche_lobe_min_separation(rstar, mstar, mass_msun):
+                continue
+            # S/N is recorded, not used to accept or reject
+            alpha = mass_msun / (mstar + mass_msun) * sma * parallax
+            snr_single = (alpha / sigma_single
+                          if sigma_single and np.isfinite(sigma_single) else np.nan)
+            snr_eff = snr_single / (1.0 + (sma / a_crit) ** 3)
+            snr_total = np.sqrt(n_transits) * snr_eff if n_transits else np.nan
+            return dict(sma=float(sma), mass_pl=float(mass),
+                        alpha_mas=float(alpha), snr_single=float(snr_single),
+                        snr_eff=float(snr_eff), snr_total=float(snr_total))
+        raise RuntimeError(f"no Roche-allowed companion within {MAX_DRAWS} draws")
 
     def draw_angles():
-        ecc = rng.uniform(priors.ecc_min, priors.ecc_max)
-        inc = (np.degrees(np.arccos(rng.uniform(-1, 1))) if priors.isotropic_inclination
-               else rng.uniform(priors.angle_min_deg, priors.angle_max_deg))
-        return dict(ecc=float(ecc), inc=float(inc),
-                    Omega=float(rng.uniform(priors.angle_min_deg, priors.angle_max_deg)),
-                    omega=float(rng.uniform(priors.angle_min_deg, priors.angle_max_deg)),
-                    M_anom=float(rng.uniform(priors.angle_min_deg, priors.angle_max_deg)))
+        return dict(ecc=float(rng.uniform(C.ECC_MIN, C.ECC_MAX)),
+                    inc=float(np.degrees(np.arccos(rng.uniform(-1, 1)))),
+                    Omega=float(rng.uniform(0.0, 360.0)),
+                    omega=float(rng.uniform(0.0, 360.0)),
+                    M_anom=float(rng.uniform(0.0, 360.0)))
 
-    if spec.n_companions == 1:
-        companion = {**draw_one(), **draw_angles()}
+    def with_period(companion):
         companion["period"] = float(semimajor_axis_to_period(
-            companion["sma"], mstar + companion["mass_pl"] * priors.mjup_in_msun))
-        return [companion]
+            companion["sma"], mstar + companion["mass_pl"] * C.MJUP_IN_MSUN))
+        return companion
+
+    if n_companions == 1:
+        return [with_period({**draw_one(), **draw_angles()})]
 
     # --- two companions: redraw until the pair is non-crossing and Hill-stable ---
-    for _attempt in range(priors.max_stability_retries):
-        first, second = draw_one(), draw_one()
-        angles = [draw_angles(), draw_angles()]
-        coplanar = (bool(rng.integers(2)) if priors.coplanar_probability == 0.5
-                    else bool(rng.random() < priors.coplanar_probability))
+    for _attempt in range(C.MAX_STABILITY_RETRIES):
+        pair = [{**draw_one(), **draw_angles()} for _ in range(2)]
+        coplanar = bool(rng.random() < C.COPLANAR_PROBABILITY)
         if coplanar:
-            angles[1]["inc"], angles[1]["Omega"] = angles[0]["inc"], angles[0]["Omega"]
+            pair[1]["inc"], pair[1]["Omega"] = pair[0]["inc"], pair[0]["Omega"]
 
-        pair = [{**first, **angles[0]}, {**second, **angles[1]}]
         pair.sort(key=lambda c: c["sma"])           # companion 1 is the inner one
-
-        mu = [c["mass_pl"] * priors.mjup_in_msun / mstar for c in pair]
+        mu = [c["mass_pl"] * C.MJUP_IN_MSUN / mstar for c in pair]
         label = classify_with_resonance(mu[0], mu[1], pair[0]["sma"], pair[1]["sma"],
-                                        pair[0]["ecc"], pair[1]["ecc"], priors)
+                                        pair[0]["ecc"], pair[1]["ecc"])
         if label in ("unstable", "likely_unstable"):
             continue
         for companion in pair:
             companion["coplanar"] = coplanar
-            companion["period"] = float(semimajor_axis_to_period(
-                companion["sma"], mstar + companion["mass_pl"] * priors.mjup_in_msun))
+            with_period(companion)
         return pair
 
-    raise RuntimeError(f"no stable pair within {priors.max_stability_retries} attempts")
+    raise RuntimeError(f"no stable pair within {C.MAX_STABILITY_RETRIES} attempts")
 
 
-def companion_columns(companions, priors):
+def companion_columns(companions):
     """Flatten companions into the per-system truth columns (_1, _2 suffixes)."""
     row = {"n_planets": len(companions)}
     for index, companion in enumerate(companions, start=1):
@@ -205,10 +191,10 @@ def companion_columns(companions, priors):
             row[f"{key}_{index}"] = companion[key]
     if len(companions) == 2:
         inner, outer = companions
-        row["coplanar"] = bool(inner.get("coplanar", False))
+        row["coplanar"] = bool(inner["coplanar"])
         row["P_ratio"] = outer["period"] / inner["period"]
-        for j in priors.resonance_orders:
+        for j in C.RESONANCE_ORDERS:
             row[f"near_{j + 1}_{j}"] = bool(near_first_order_resonance(
-                inner["sma"], outer["sma"], j=j, tol=priors.resonance_tolerance))
-        row["near_resonance"] = any(row[f"near_{j + 1}_{j}"] for j in priors.resonance_orders)
+                inner["sma"], outer["sma"], j=j, tol=C.RESONANCE_TOLERANCE))
+        row["near_resonance"] = any(row[f"near_{j + 1}_{j}"] for j in C.RESONANCE_ORDERS)
     return row

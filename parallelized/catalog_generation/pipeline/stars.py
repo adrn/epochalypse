@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.interpolate import interp1d
 
-from .config import CatalogConfig
+from . import config as C
 
 # Column names of the Pecaut & Mamajek table (whitespace separated, # comments).
 PECAUT_COLUMNS = [
@@ -21,39 +20,37 @@ PECAUT_COLUMNS = [
 ]
 
 
-def add_mass_radius_from_pecaut(sources, pecaut_path, *, parallax_col,
-                                gmag_col, source_id_col, verbose=True):
+def add_mass_radius_from_pecaut(sources, verbose=True):
     """Add absolute G magnitude plus interpolated mass and radius.
 
-    Interpolation is linear in absolute G with `fill_value=np.nan`, so stars
-    outside the table's M_G range are left NaN rather than extrapolated.
+    Linear in absolute G; stars outside the table's M_G range come out NaN
+    rather than extrapolated.
     """
-    pecaut = pd.read_csv(pecaut_path, sep=r"\s+", comment="#",
+    pecaut = pd.read_csv(C.PECAUT_MAMAJEK, sep=r"\s+", comment="#",
                          header=None, names=PECAUT_COLUMNS)
     for column in ["M_G", "Msun", "R_Rsun"]:
         pecaut[column] = pd.to_numeric(pecaut[column], errors="coerce")
     pecaut = pecaut.dropna(subset=["M_G", "Msun", "R_Rsun"]).sort_values("M_G")
 
-    mass_from_absg = interp1d(pecaut["M_G"], pecaut["Msun"], kind="linear",
-                              bounds_error=False, fill_value=np.nan)
-    radius_from_absg = interp1d(pecaut["M_G"], pecaut["R_Rsun"], kind="linear",
-                                bounds_error=False, fill_value=np.nan)
-
     df = sources.copy()
-    df[gmag_col] = pd.to_numeric(df[gmag_col], errors="coerce")
-    df[parallax_col] = pd.to_numeric(df[parallax_col], errors="coerce")
+    df[C.GMAG_COL] = pd.to_numeric(df[C.GMAG_COL], errors="coerce")
+    df[C.PARALLAX_COL] = pd.to_numeric(df[C.PARALLAX_COL], errors="coerce")
 
-    valid = df[gmag_col].notna() & df[parallax_col].notna() & (df[parallax_col] > 0)
+    valid = (df[C.GMAG_COL].notna() & df[C.PARALLAX_COL].notna()
+             & (df[C.PARALLAX_COL] > 0))
 
     df["abs_G"] = np.nan
     df["mass_interp"] = np.nan
     df["radius_interp"] = np.nan
 
     df.loc[valid, "abs_G"] = (
-        df.loc[valid, gmag_col] + 5 * np.log10(df.loc[valid, parallax_col] / 1000) + 5
+        df.loc[valid, C.GMAG_COL]
+        + 5 * np.log10(df.loc[valid, C.PARALLAX_COL] / 1000) + 5
     )
-    df.loc[valid, "mass_interp"] = mass_from_absg(df.loc[valid, "abs_G"])
-    df.loc[valid, "radius_interp"] = radius_from_absg(df.loc[valid, "abs_G"])
+    abs_g = df.loc[valid, "abs_G"].to_numpy(dtype=float)
+    for column, table in (("mass_interp", "Msun"), ("radius_interp", "R_Rsun")):
+        df.loc[valid, column] = np.interp(abs_g, pecaut["M_G"], pecaut[table],
+                                          left=np.nan, right=np.nan)
 
     if verbose:
         print(f"  rows: {len(df)} | valid parallax + G: {int(valid.sum())} | "
@@ -62,58 +59,48 @@ def add_mass_radius_from_pecaut(sources, pecaut_path, *, parallax_col,
     return df
 
 
-def build_star_catalog(config: CatalogConfig, *, overwrite=True) -> pd.DataFrame:
-    """Stage 1. Returns the stellar catalog and writes it to `paths.stars_csv`."""
+def build_star_catalog(*, overwrite=True) -> pd.DataFrame:
+    """Stage 1. Returns the stellar catalog and writes it to `stars.csv`."""
     import pyarrow as pa
     import pyarrow.ipc as ipc
 
-    paths, selection = config.paths, config.stars
+    stars_csv = C.stars_csv()
+    if stars_csv.exists() and not overwrite:
+        print(f"  {stars_csv} exists; reusing (pass --overwrite to rebuild)")
+        return pd.read_csv(stars_csv, low_memory=False,
+                           dtype={"gaia_source_id": str, "source_id_dr2": str})
 
-    if paths.stars_csv.exists() and not overwrite:
-        print(f"  {paths.stars_csv} exists; reusing (pass --overwrite to rebuild)")
-        return pd.read_csv(paths.stars_csv,
-                           dtype={"gaia_source_id": str, "source_id_dr2": str},
-                           low_memory=False)
-
-    with pa.memory_map(str(paths.g23h_sample), "r") as source:
+    with pa.memory_map(str(C.G23H_SAMPLE), "r") as source:
         sources = ipc.open_file(source).read_all().to_pandas()
-    print(f"  loaded {len(sources):,} stars from {paths.g23h_sample}")
+    print(f"  loaded {len(sources):,} stars from {C.G23H_SAMPLE}")
 
-    interpolated = add_mass_radius_from_pecaut(
-        sources, paths.pecaut_mamajek,
-        parallax_col=selection.parallax_col,
-        gmag_col=selection.gmag_col,
-        source_id_col=selection.source_id_col,
-    )
+    stars = add_mass_radius_from_pecaut(sources)
 
-    stars = interpolated
-    if selection.collapse_duplicate_source_ids:
-        duplicated = stars[selection.source_id_col].duplicated().sum()
-        if duplicated:
-            # Keep the row with the smallest source_id_dr2 in each group -- a rule
-            # that does not depend on the order rows arrive in -- then restore the
-            # catalog's own ordering, because that ordering becomes the integer
-            # task-id mapping once the indices are built.
-            keep = stars.groupby(selection.source_id_col)["source_id_dr2"].idxmin()
-            stars = stars.loc[np.sort(keep.to_numpy())].copy()
-            print(f"  collapsed {duplicated:,} duplicate DR2 cross-match rows "
-                  f"-> {len(stars):,} unique sources")
+    # G23H repeats a star once per DR2 cross-match, so collapse to one row per
+    # source. Keep the row with the smallest source_id_dr2 in each group -- a
+    # rule independent of the order rows arrive in -- then restore the
+    # catalog's own ordering, which is what the source list is built from.
+    duplicated = stars[C.SOURCE_ID_COL].duplicated().sum()
+    if duplicated:
+        keep = stars.groupby(C.SOURCE_ID_COL)["source_id_dr2"].idxmin()
+        stars = stars.loc[np.sort(keep.to_numpy())].copy()
+        print(f"  collapsed {duplicated:,} duplicate DR2 cross-match rows "
+              f"-> {len(stars):,} unique sources")
 
-    if selection.require_mass_radius:
-        keep = stars["mass_interp"].notna() & stars["radius_interp"].notna()
-        print(f"  dropped {int((~keep).sum())} stars outside the Pecaut & Mamajek range")
-        stars = stars[keep].copy()
+    # Stars outside the Pecaut & Mamajek M_G range have no mass or radius.
+    keep = stars["mass_interp"].notna() & stars["radius_interp"].notna()
+    print(f"  dropped {int((~keep).sum())} stars outside the Pecaut & Mamajek range")
+    stars = stars[keep].copy()
 
-    # `require_sigma_al` is applied downstream (stage 2/3) rather than here, so
-    # that stars.csv stays the full mass/radius-valid sample and every
-    # population applies one identical noise-model cut.
-    if selection.require_sigma_al:
-        n_missing = int((~np.isfinite(stars["sig_AL"].to_numpy(dtype=float))).sum())
-        if n_missing:
-            print(f"  note: {n_missing} stars lack sig_AL; they are dropped when "
-                  "populations are built, not from stars.csv")
+    # A handful of high-RUWE binaries carry no per-CCD AL noise calibration.
+    # They are dropped when the source list is built (`sources.build_indices`),
+    # not here, so stars.csv stays the full mass/radius-valid sample.
+    n_missing = int((~np.isfinite(stars["sig_AL"].to_numpy(dtype=float))).sum())
+    if n_missing:
+        print(f"  note: {n_missing} stars lack sig_AL; they are dropped from the "
+              "source list, not from stars.csv")
 
-    paths.stars_csv.parent.mkdir(parents=True, exist_ok=True)
-    stars.to_csv(paths.stars_csv, index=False)
-    print(f"  wrote {len(stars):,} stars -> {paths.stars_csv}")
+    stars_csv.parent.mkdir(parents=True, exist_ok=True)
+    stars.to_csv(stars_csv, index=False)
+    print(f"  wrote {len(stars):,} stars -> {stars_csv}")
     return stars
