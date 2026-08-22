@@ -1,0 +1,32 @@
+[project]
+name = "epochalypse-parallel"
+version = "0.1.0"
+description = "Simulated Gaia DR4 epoch astrometry for ~4 million stars"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",     # parquet shards + memory-mapped Arrow lookups
+    "astropy",     # all physical constants
+    "jax",         # pulls in jaxlib
+    "jaxoplanet",  # the Keplerian reflex model
+    "matplotlib",
+    "healpy",      # the sky-map figure only
+]
+
+[project.optional-dependencies]
+# Kept out of the default set because mpi4py must be built against the MPI that
+# mpirun/srun actually use -- a wheel built against a different one fails across
+# nodes. See the cluster install in the README. Without mpi4py, run_mpi.py runs
+# as a single rank, which is what makes it usable on a laptop.
+mpi = ["mpi4py"]
+
+# src/epochalypse_fitting.py and src/run_periodograms.py, which still target the
+# serial catalog's layout and do not run against this catalog yet.
+analysis = ["scipy", "h5py"]
+
+[tool.uv]
+# A script tree, not an importable package: the entry points are run by path and
+# add their own directories to sys.path. Nothing to build or install.
+package = false
