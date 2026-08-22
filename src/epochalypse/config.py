@@ -5,21 +5,21 @@ constants. Read them as `config.A_MIN_AU`; there is nothing to construct and
 nothing to pass down. The output paths are functions because `--output-root`
 can move them; everything else is a value.
 
-Physical constants come from `src/epochalypse_constants` (astropy), never typed
+Physical constants come from `epochalypse.constants` (astropy), never typed
 in here, so no two call sites can disagree in the fifth decimal.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]      # the `parallelized/` tree
-sys.path.insert(0, str(ROOT / "src"))
+from .constants import (DAYS_PER_YEAR, DR4_BASELINE_YEARS, GAIA_EPOCH_TCB_JD,
+                        MARS_IN_MJUP, MAX_COMPANION_MASS_MJUP, MJUP_IN_MSUN,
+                        RSUN_IN_AU)
 
-from epochalypse_constants import (DAYS_PER_YEAR, DR4_BASELINE_YEARS,   # noqa: E402
-                                  GAIA_EPOCH_TCB_JD, MARS_IN_MJUP,
-                                  MAX_COMPANION_MASS_MJUP, MJUP_IN_MSUN,
-                                  RSUN_IN_AU)
+# The repo root: src/epochalypse/config.py -> ../../ . Inputs and outputs are
+# resolved relative to it, so an editable checkout finds data/ and outputs/
+# wherever it is. `--output-root` overrides the output half.
+ROOT = Path(__file__).resolve().parents[2]
 
 # ==========================================================================
 # Inputs -- static, not produced here

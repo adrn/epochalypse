@@ -4,33 +4,31 @@
     stars  ->  index  ->  [ mpirun run_mpi.py ]  ->  merge  ->  select  ->  figures
 
 Every prior, threshold, path, seed, and figure choice lives in
-`pipeline/config.py`; this file only decides what runs.
+`epochalypse/config.py`; this file only decides what runs.
 
 The `simulate` step is not a stage here. It is the only expensive part, it is
 the part that needs many cores, and it is `run_mpi.py`:
 
-    python catalog_generation/generate_catalog.py --stages stars index
-    mpirun -n 1024 python catalog_generation/run_mpi.py
-    python catalog_generation/generate_catalog.py --stages merge select figures
+    python scripts/generate_catalog.py --stages stars index
+    mpirun -n 1024 python scripts/run_mpi.py
+    python scripts/generate_catalog.py --stages merge select figures
 
 Usage
 -----
-    python catalog_generation/generate_catalog.py                  # all stages
-    python catalog_generation/generate_catalog.py --stages figures
-    python catalog_generation/generate_catalog.py --stages figures \
+    python scripts/generate_catalog.py                  # all stages
+    python scripts/generate_catalog.py --stages figures
+    python scripts/generate_catalog.py --stages figures \
         --figures population_schematic companion_gallery
-    python catalog_generation/generate_catalog.py --stages stars --overwrite
+    python scripts/generate_catalog.py --stages stars --overwrite
 """
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pipeline import config as C      # noqa: E402
+from epochalypse import config as C
 
 STAGES = ("stars", "index", "merge", "select", "figures")
 # populations with companions; the control has no companions to select on
@@ -61,7 +59,7 @@ def select_views(population):
     """Write the high-SNR view of a population: the top slice by SNR_tot."""
     import pandas as pd
 
-    from pipeline.sources import select_high_snr
+    from epochalypse.sources import select_high_snr
 
     merged = C.truths(population)
     if not merged.exists():
@@ -83,12 +81,12 @@ def run(stages, populations, *, overwrite, figures=None):
 
     if "stars" in stages:
         print("\n== stars -- parent stellar sample ==")
-        from pipeline.stars import build_star_catalog
+        from epochalypse.stars import build_star_catalog
         build_star_catalog(overwrite=overwrite)
 
     if "index" in stages:
         print("\n== index -- per-source lookup indices ==")
-        from pipeline.sources import build_indices
+        from epochalypse.sources import build_indices
         build_indices(overwrite=overwrite)
 
     if "merge" in stages:
@@ -104,7 +102,7 @@ def run(stages, populations, *, overwrite, figures=None):
 
     if "figures" in stages:
         print("\n== figures ==")
-        from pipeline.figures import make_figures
+        from epochalypse.figures import make_figures
         make_figures(figures)
 
     print(f"\ndone in {time.perf_counter() - started:.1f} s")
@@ -122,7 +120,7 @@ def main(argv=None):
     parser.add_argument("--overwrite", action="store_true",
                         help="rebuild stars.csv / the indices instead of reusing them")
     parser.add_argument("--output-root", type=Path,
-                        help="write products here instead of parallelized/outputs")
+                        help="write products here instead of <repo>/outputs")
     args = parser.parse_args(argv)
 
     if args.output_root:

@@ -32,15 +32,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pipeline import astrometry as astro                  # noqa: E402
-from pipeline import config as C                          # noqa: E402
-from pipeline.sources import ScanLawStore, SourceCatalog   # noqa: E402
+from epochalypse import astrometry as astro
+from epochalypse import config as C
+from epochalypse.sources import ScanLawStore, SourceCatalog
 
 
 def mpi_context():
@@ -116,7 +114,7 @@ def main(argv=None):
     parser.add_argument("--populations", nargs="+", choices=list(C.POPULATIONS),
                         default=list(C.POPULATIONS))
     parser.add_argument("--output-root", type=Path,
-                        help="write shards here instead of parallelized/outputs")
+                        help="write shards here instead of <repo>/outputs")
     parser.add_argument("--limit", type=int,
                         help="cap sources per rank (smoke tests only)")
     parser.add_argument("--skip-existing", action="store_true",
@@ -151,7 +149,7 @@ def main(argv=None):
         print(f"  slowest rank : {max(s['seconds'] for s in all_summaries) / 60:.1f} min")
         if skipped:
             print(f"  skipped      : {skipped:,} sources (see {C.skipped_dir()})")
-        print("  next         : python catalog_generation/generate_catalog.py "
+        print("  next         : python scripts/generate_catalog.py "
               "--stages merge select figures")
     return 0
 

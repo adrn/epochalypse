@@ -28,7 +28,7 @@ import pandas as pd
 # --------------------------------------------------------------------------------------
 # Physical and mission constants live in one place, derived from astropy, and are
 # re-exported here so existing callers (`ef.MJUP_TO_MSUN`, ...) keep working.
-from epochalypse_constants import (  # noqa: E402,F401
+from .constants import (  # noqa: F401
     DAYS_PER_YEAR,
     DR4_BASELINE_YEARS,
     GAIA_EPOCH_TCB_JD,

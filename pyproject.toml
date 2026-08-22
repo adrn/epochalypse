@@ -1,5 +1,5 @@
 [project]
-name = "epochalypse-parallel"
+name = "epochalypse"
 version = "0.1.0"
 description = "Simulated Gaia DR4 epoch astrometry for ~4 million stars"
 requires-python = ">=3.11"
@@ -22,11 +22,13 @@ dependencies = [
 # as a single rank, which is what makes it usable on a laptop.
 mpi = ["mpi4py"]
 
-# src/epochalypse_fitting.py and src/run_periodograms.py, which still target the
+# epochalypse.fitting and scripts/run_periodograms.py, which still target the
 # serial catalog's layout and do not run against this catalog yet.
 analysis = ["scipy", "h5py"]
 
-[tool.uv]
-# A script tree, not an importable package: the entry points are run by path and
-# add their own directories to sys.path. Nothing to build or install.
-package = false
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/epochalypse"]

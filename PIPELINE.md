@@ -42,14 +42,14 @@ MPICC=$(which mpicc) uv pip install --no-binary=mpi4py mpi4py
 
 Without `mpi4py`, `run_mpi.py` runs as a single rank, which is what makes it
 usable on a laptop. `uv sync --extra analysis` adds scipy and h5py for
-`src/`, which does not run against this catalog yet.
+`epochalypse.fitting`, which does not run against this catalog yet.
 
 ### Inputs
 
 Four static files under `data/g23h_epochalypse_stars/` and `data/`, none
 produced here. The two large ones are gitignored; the small ones are committed.
 Paths are `G23H_SAMPLE` and `SCANLAW_DR4` in
-`catalog_generation/pipeline/config.py`.
+`src/epochalypse/config.py`.
 
 | file | what |
 | --- | --- |
@@ -68,22 +68,22 @@ raises naming the offending ids rather than returning the wrong epochs.
 
 ```bash
 # 1. parent stellar sample + per-source lookup indices (once)
-python catalog_generation/generate_catalog.py --stages stars index
+python scripts/generate_catalog.py --stages stars index
 
 # 2. simulate -- the expensive part, and the only one that needs a cluster
-mpirun python catalog_generation/run_mpi.py
+mpirun python scripts/run_mpi.py
 
 # 3. merge the shards, select the high-SNR views, draw the figures
-python catalog_generation/generate_catalog.py --stages merge select figures
+python scripts/generate_catalog.py --stages merge select figures
 ```
 
 Locally, `run_mpi.py` falls back to a single rank when mpi4py is absent, which
 is how you test it:
 
 ```bash
-python catalog_generation/run_mpi.py --limit 200         # one process, no MPI
-mpirun -n 8 python catalog_generation/run_mpi.py         # 8 local processes
-python catalog_generation/simulate_source.py 5484066448309985152   # one star, printed
+python scripts/run_mpi.py --limit 200         # one process, no MPI
+mpirun -n 8 python scripts/run_mpi.py         # 8 local processes
+python scripts/simulate_source.py 5484066448309985152   # one star, printed
 ```
 
 Both drivers take `--output-root` to write somewhere other than `outputs/`, and
@@ -122,7 +122,7 @@ cd /mnt/ceph/users/apricewhelan/projects/epochalypse/parallelized
 source .venv/bin/activate
 
 date
-python catalog_generation/generate_catalog.py --stages stars index
+python scripts/generate_catalog.py --stages stars index
 date
 ```
 
@@ -148,7 +148,7 @@ export OMP_NUM_THREADS=1
 export JAX_PLATFORMS=cpu          # skip the GPU probe on CPU nodes
 
 date
-mpirun python catalog_generation/run_mpi.py --skip-existing
+mpirun python scripts/run_mpi.py --skip-existing
 date
 ```
 
@@ -207,19 +207,21 @@ fraction costs seconds and needs no regeneration.
 ## Layout
 
 ```
-parallelized/
-├── catalog_generation/
+epochalypse/
+├── src/epochalypse/            the library
+│   ├── config.py               every prior, path, seed, and figure choice
+│   ├── constants.py            physical + mission constants, from astropy
+│   ├── stars.py                parent stellar sample
+│   ├── sources.py              per-source lookup + the high-SNR selection
+│   ├── planets.py              per-source companion draw (Roche + Hill screens)
+│   ├── astrometry.py           per-source epoch simulation + ShardWriter
+│   ├── figures.py              the catalog figures
+│   └── fitting.py              periodogram characterization -- not ported
+├── scripts/                    the entry points
 │   ├── generate_catalog.py     stages: stars, index, merge, select, figures
 │   ├── run_mpi.py              the simulation; MPI ranks, the cluster entry point
 │   ├── simulate_source.py      print one star, for inspection
-│   └── pipeline/
-│       ├── config.py           every prior, path, seed, and figure choice
-│       ├── stars.py            parent stellar sample
-│       ├── sources.py          per-source lookup + the high-SNR selection
-│       ├── planets.py          per-source companion draw (Roche + Hill screens)
-│       ├── astrometry.py       per-source epoch simulation + ShardWriter
-│       └── figures.py          the catalog figures
-├── src/                        shared constants; the analysis modules
+│   └── run_periodograms.py     characterization -- not ported
 ├── pyproject.toml              dependencies; uv.lock pins them
 ├── data/                       static inputs (see Setup)
 ├── outputs/                    generated: data/ (shards, indices, truth tables), figures/
@@ -228,7 +230,7 @@ parallelized/
 
 ## Why the lookup layer exists
 
-At 4M stars the scan law is ~400M rows. `pipeline/sources.py` builds two small
+At 4M stars the scan law is ~400M rows. `epochalypse/sources.py` builds two small
 indices once (`gaia_source_id -> row`, `gaia_source_id -> (offset, length)`) and
 every rank memory-maps the Arrow table behind them, so a process touches only
 the pages for the sources it actually simulates instead of loading tens of GB.
@@ -266,6 +268,6 @@ p = 0.2 on mass; KS p = 0.08–0.9 against the serial pipeline across sma, mass,
 eccentricity, inclination, period, alpha, SNR). Any previously generated
 1- or 2-companion catalog must be regenerated rather than mixed with new output.
 
-Not yet done: the analysis side (`src/run_periodograms.py`) still assumes the
+Not yet done: the analysis side (`scripts/run_periodograms.py`) still assumes the
 serial catalog's file layout and population names, so the characterization step
 needs porting to the parquet shards before it can run against this catalog.

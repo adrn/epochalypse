@@ -6,7 +6,7 @@ Usage:
 Writes one CSV per population to outputs/data/characterization_<population>.csv, with one row per
 system (periodogram summary + acceleration test + data-only detection/characterization flags +
 truth-based period recovery, joined to the injected-truth columns). See
-``epochalypse_fitting.characterize_population`` for the columns.
+``epochalypse.fitting.characterize_population`` for the columns.
 """
 import sys
 import time
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-import epochalypse_fitting as ef
+from epochalypse import fitting as ef
 
 # Trial-period grid: 0.01 yr .. the longest injected period in any population (3228 yr: the outer
 # companion of 2_companion_agnostic; period_1 alone reaches 2712 yr). The grid must bracket every

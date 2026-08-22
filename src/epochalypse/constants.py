@@ -3,7 +3,7 @@
 Everything physical is derived from `astropy.constants` / `astropy.units` rather
 than typed in, so there is a single authority and no room for two call sites to
 disagree in the fifth decimal. The catalog-generation pipeline
-(`catalog_generation/`) and the analysis code (`src/`) both import from here.
+(`scripts/`) and the analysis code (`src/`) both import from here.
 
 The printed values are the astropy ones at the time of writing; they are
 comments, not definitions -- the expressions are what run.
@@ -43,7 +43,7 @@ DR4_BASELINE_YEARS = 5.5
 # Companion-mass prior bounds, in solar masses
 # --------------------------------------------------------------------------
 # The upper bound is the hydrogen-burning limit used throughout the catalog;
-# `catalog_generation` states the same bound in Jupiter masses.
+# `epochalypse.config` states the same bound in Jupiter masses.
 MAX_COMPANION_MASS_MJUP = 80.0
 MAX_COMPANION_MASS_MSUN = MAX_COMPANION_MASS_MJUP * MJUP_IN_MSUN
 

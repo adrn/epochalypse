@@ -10,20 +10,17 @@ it guards:
 * per-source determinism, which is what makes the pipeline shardable;
 * the priors and the Roche / Hill screens actually holding on real draws;
 * the mass-radius interpolation edge behaviour (NaN, not extrapolation);
-* that every path stays inside `parallelized/` -- this tree is deliberately
-  isolated from the repo root, and a path escaping is not otherwise visible.
+* that every path resolves inside the checkout -- `config.ROOT` is found by
+  walking up from `__file__`, and a path escaping it is not otherwise visible.
 """
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent / "catalog_generation"))
 
 import numpy as np
 import pandas as pd
 
-from pipeline import config as C
-from pipeline import planets as P
-from pipeline import stars as S
+from epochalypse import config as C
+from epochalypse import planets as P
+from epochalypse import stars as S
 
 HERE = Path(__file__).resolve().parent
 
@@ -40,13 +37,13 @@ def star(source_id, *, mass=0.55, radius=0.52):
 
 
 def test_isolation():
-    """Every path this tree touches must live under parallelized/."""
+    """Every path the pipeline touches must live under the checkout."""
     paths = [C.ROOT, C.DATA_IN, C.G23H_SAMPLE, C.SCANLAW_DR4, C.PECAUT_MAMAJEK,
              C.GOST_FOV_MAP, C.OUTPUT_ROOT, C.stars_csv(), C.index_dir(),
              C.truths("1_companion"), C.shard_epochs("2_companion", 3, 512)]
     for path in paths:
         assert HERE in Path(path).parents or Path(path) == HERE, \
-            f"{path} escapes {HERE} -- this tree must not read the repo root"
+            f"{path} escapes {HERE} -- inputs and outputs must stay in the checkout"
 
 
 def test_seeding():
