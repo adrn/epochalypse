@@ -27,6 +27,8 @@ cut and maps the sharded truth schema onto the column names the figures use.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -62,27 +64,49 @@ def _save(fig, stem):
 
 
 def read_population(population, high_snr=False):
+    """See `_read_population`; this only normalizes the cache key.
+
+    `lru_cache` keys on the argument tuple, so `read_population(p)` and
+    `read_population(p, False)` would otherwise be two entries -- and the
+    figures call it both ways.
+    """
+    return _read_population(population, bool(high_snr))
+
+
+@lru_cache(maxsize=None)
+def _read_population(population, high_snr):
     """A population as a DataFrame, in the column names the figures expect.
 
-    Reads the merged truth table (or the shard files), applies the top-fraction
-    SNR_tot cut when `high_snr`, and renames the sharded schema back to the
-    legacy figure columns: `sma_1 -> sma` for one-companion populations,
-    `alpha_mas_k -> alpha_k_mas`, `mass_st_msun -> mass_st`, `parallax_mas ->
-    parallax`.
-    """
-    merged = C.truths(population)
-    if merged.exists():
-        frame = pd.read_parquet(merged)
-    else:
-        parts = sorted(C.shard_dir(population).glob("truths_*.parquet"))
-        if not parts:
-            raise FileNotFoundError(
-                f"no truth table for {population}: neither {merged} nor shards "
-                f"in {C.shard_dir(population)}")
-        frame = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
+    Reads the merged truth table (or the shard files) and renames the sharded
+    schema back to the legacy figure columns: `sma_1 -> sma` for one-companion
+    populations, `alpha_mas_k -> alpha_k_mas`, `mass_st_msun -> mass_st`,
+    `parallax_mas -> parallax`.
 
+    Cached: a full figure set asks for the same four tables sixteen times, and
+    at 4M systems each one is a GB-scale parquet decode. The figures only ever
+    read the frames, never mutate them, so one copy is shared.
+
+    For a high-SNR view this prefers the table the `select` stage already wrote
+    -- 1% of the rows -- and only falls back to recomputing the cut if that file
+    is absent.
+    """
     if high_snr:
-        frame = select_high_snr(frame)
+        selected = C.truths(population, high_snr=True)
+        if selected.exists():
+            frame = pd.read_parquet(selected)
+        else:
+            frame = select_high_snr(_read_population(population, False))
+    else:
+        merged = C.truths(population)
+        if merged.exists():
+            frame = pd.read_parquet(merged)
+        else:
+            parts = sorted(C.shard_dir(population).glob("truths_*.parquet"))
+            if not parts:
+                raise FileNotFoundError(
+                    f"no truth table for {population}: neither {merged} nor shards "
+                    f"in {C.shard_dir(population)}")
+            frame = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
 
     frame = frame.rename(columns={"mass_st_msun": "mass_st", "parallax_mas": "parallax",
                                   "mass_interp": "mass_st"})
@@ -208,7 +232,9 @@ def plot_star_sky_scanlaw():
         print(f"  skipping star_sky_scanlaw: {gost_path} not found")
         return []
 
-    stars = pd.read_csv(C.stars_csv(), low_memory=False)
+    # five columns of a 117-column, multi-GB CSV at 4M stars
+    stars = pd.read_csv(C.stars_csv(), low_memory=False,
+                        usecols=["ra", "dec", "parallax", "mass_interp", "sig_AL"])
     # the final parent sample: finite astrometry, positive parallax/mass, and a
     # usable noise model
     sky = stars.loc[
@@ -247,13 +273,14 @@ def plot_star_sky_scanlaw():
                              badcolor="white", bgcolor="white", flip="astro")
         ax = plt.gca()
 
+        # rasterized: at 4M stars a vector scatter is a PDF no viewer opens
         hp.visufunc.projscatter(sky["ra"].to_numpy(), sky["dec"].to_numpy(),
                                 lonlat=True, coord="C",
                                 c=sky["distance_pc"].to_numpy(),
                                 s=marker_area(sky["mass_interp"].to_numpy()),
                                 cmap=star_cmap, norm=star_norm,
                                 edgecolors="k", linewidths=0.12, alpha=0.88,
-                                zorder=10)
+                                zorder=10, rasterized=True)
 
         _decorate_skymap(ax, display_grat, foreign_grat, label_coord)
         add_curved_colorbar(ax, 0, C.DISTANCE_VMAX_PC, star_cmap,
@@ -378,7 +405,7 @@ def plot_population_schematic():
 
     # ---- top: the horizontal selection funnel ----
     col_funnel, col_parent = C.FUNNEL_COLOR, C.PARENT_COLOR
-    g = box(ax, 2.60, 7.85, 2.95, 1.45, col_funnel, r"\texttt{G23H} catalog",
+    g = box(ax, 2.60, 7.85, 2.95, 1.45, col_funnel, r"$\mathtt{G23H}$ catalog",
             [r"DR2-DR3 cross-match", r"$G<16$"], title_fs=23, fontsize=15)
     b1 = box(ax, 5.90, 7.85, 3.05, 1.55, col_funnel, f"{n_g23h:,} stars",
              [r"$\varpi\geq4$ mas ($d\leq250$ pc);", "uniform-in-distance draw"],
@@ -438,7 +465,7 @@ def plot_population_schematic():
             rf"{coplanar_pct:.0f}/{100 - coplanar_pct:.0f} coplanar vs. "
             r"mutually inclined; $a_1<a_2$",
             ha="center", va="center", fontsize=15, color=ink, style="italic")
-    ax.set_title(r"the \texttt{epochalypse} injected populations",
+    ax.set_title(r"the $\mathtt{epochalypse}$ injected populations",
                  fontsize=45, fontweight="bold", pad=4)
     fig.tight_layout()
     return _save(fig, "population_schematic")
@@ -543,7 +570,7 @@ def plot_population_diagnostics(n_companions):
                             transform=axes[2, 2].transAxes, ha="center",
                             va="top", fontsize=27, color="0.25")
 
-            title = r"\texttt{epochalypse} injected two companion systems"
+            title = r"$\mathtt{epochalypse}$ injected two companion systems"
             rect_top, sup_y = 0.915, 0.99
         else:
             fig, axes = plt.subplots(2, 3, figsize=(15, 10.5))
@@ -573,7 +600,7 @@ def plot_population_diagnostics(n_companions):
                     np.cos(np.radians(high_snr["inc"])), bins=cos_bins)
             axes[1, 2].set(xlabel=r"$\cos(i)$", title=r"inclination")
 
-            title = r"\texttt{epochalypse} injected one companion systems"
+            title = r"$\mathtt{epochalypse}$ injected one companion systems"
             rect_top, sup_y = 0.875, 0.985
 
         style(axes)
@@ -692,7 +719,7 @@ def plot_companion_gallery():
     ]
     fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False,
                fontsize=24, bbox_to_anchor=(0.5, 0.955), columnspacing=2.4)
-    fig.suptitle(rf"{len(panels) * n_per_row} \texttt{{epochalypse}} injected "
+    fig.suptitle(rf"{len(panels) * n_per_row} $\mathtt{{epochalypse}}$ injected "
                  r"companion systems (on-sky orbits)", fontsize=45, y=0.992)
     fig.text(0.5, 0.016,
              r"per panel:\ \ $M$ [$M_{\rm J}$]\quad $P$ [yr]\quad $e$\quad "
@@ -773,7 +800,7 @@ def plot_simulated_planet_mass_period():
 
     # centre the title/legend over the panel block, not the whole figure
     centre_x = 0.5 * (0.075 + 0.88)
-    fig.suptitle(r"\texttt{epochalypse} injected companions", fontsize=36,
+    fig.suptitle(r"$\mathtt{epochalypse}$ injected companions", fontsize=36,
                  x=centre_x, y=0.965)
     handles = [
         Line2D([0], [0], marker="o", color="0.35", lw=0, markersize=10,
