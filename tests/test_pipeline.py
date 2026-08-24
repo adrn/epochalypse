@@ -159,6 +159,24 @@ def test_mass_radius_interpolation():
     assert got["radius_interp"][4:].isna().all()
 
 
+def test_config_exposes_every_constant_the_package_reads():
+    """`config.X` names are re-exports; a linter once stripped four of them.
+
+    They are unused *inside* config.py, so an unused-import pass removes them
+    and the simulator dies on the first source -- inside a try/except, on a
+    512-rank job. Cheaper to notice here.
+    """
+    import re
+
+    package = Path(__file__).resolve().parents[1] / "src" / "epochalypse"
+    referenced = set()
+    for module in package.glob("*.py"):
+        referenced |= set(re.findall(r"\bC\.([A-Z][A-Z0-9_]+)\b", module.read_text()))
+    assert referenced, "found no C.CONSTANT references -- did the alias change?"
+    missing = sorted(name for name in referenced if not hasattr(C, name))
+    assert not missing, f"config.py does not define: {missing}"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

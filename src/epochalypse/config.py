@@ -13,11 +13,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .constants import (
-    DR4_BASELINE_YEARS,
-    MARS_IN_MJUP,
-    MAX_COMPANION_MASS_MJUP,
-)
+# Re-exported so every stage reads one authority as `config.X`. Four of these
+# are used only by other modules, never inside this file, so an unused-import
+# pass will strip them if allowed to -- which happened once and left the
+# simulator without DAYS_PER_YEAR, MJUP_IN_MSUN, RSUN_IN_AU, and
+# GAIA_EPOCH_TCB_JD. Assignments, not a bare import, so it cannot recur.
+from . import constants as _k
+
+DAYS_PER_YEAR = _k.DAYS_PER_YEAR
+DR4_BASELINE_YEARS = _k.DR4_BASELINE_YEARS
+GAIA_EPOCH_TCB_JD = _k.GAIA_EPOCH_TCB_JD
+MARS_IN_MJUP = _k.MARS_IN_MJUP
+MAX_COMPANION_MASS_MJUP = _k.MAX_COMPANION_MASS_MJUP
+MJUP_IN_MSUN = _k.MJUP_IN_MSUN
+RSUN_IN_AU = _k.RSUN_IN_AU
 
 # The repo root: src/epochalypse/config.py -> ../../ . Inputs and outputs are
 # resolved relative to it, so an editable checkout finds data/ and outputs/
