@@ -2,8 +2,9 @@
 #SBATCH -J epochalypse-sim
 #SBATCH -o logs/epochalypse-sim.o
 #SBATCH -e logs/epochalypse-sim.e
-#SBATCH -N 8
-#SBATCH --ntasks-per-node=64
+#SBATCH -N 10
+#SBATCH --ntasks-per-node=32
+#SBATCH --exclusive
 #SBATCH -t 6:00:00
 #SBATCH -p cca
 #SBATCH --constraint=rome
