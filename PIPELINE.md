@@ -52,14 +52,14 @@ Two kinds, with different lifecycles.
 
 **The delivered dataset** — the parent sample and the DR4 scan law, ~12 GB — is
 relocatable with `--data-root`, because it changes from run to run and does not
-belong in a home directory. The layout under that root mirrors `data/`, so
-moving it is a straight copy:
+belong in a home directory. Both files sit directly under that root, so moving
+the dataset is a straight copy:
 
 ```bash
 --data-root $DATA_ROOT      # e.g. <scratch>/project-data/epochalypse
 ```
 
-| under `<data-root>/g23h_epochalypse_stars/` | what |
+| directly under `$DATA_ROOT` | what |
 | --- | --- |
 | `G23H_within_500pc.arrow` (1.2 GB) | parent sample, one row per DR2 cross-match |
 | `scanlaw_dr4_within_500pc_hpx64_transit_loss10.arrow` (10.7 GB) | DR4 scan law, one row per FoV transit |
@@ -75,7 +75,7 @@ tests need no dataset.
 
 Outputs are relocatable the same way, with `--output-root`; the periodogram half
 adds `--catalog-root` for reading a catalog someone else generated. All five
-`mpi/*.sh` scripts set the ceph roots at the top.
+`mpi/*.sh` scripts set their roots at the top.
 
 The scan law **must be grouped by `gaia_source_id`**, one contiguous block per
 source, or the offset index is meaningless. `build_indices` verifies this and

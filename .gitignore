@@ -1,7 +1,7 @@
 # The full parent sample (~1 GB) and DR4 scan law (~11 GB). The small subset is
 # committed and stays tracked; anything else dropped in here does not.
-/data/g23h_epochalypse_stars/*.arrow
-!/data/g23h_epochalypse_stars/G23H_sample_subset.arrow
+/data/*.arrow
+!/data/G23H_sample_subset.arrow
 
 # Generated: shards, indices, truth tables, figures.
 /outputs/
@@ -15,4 +15,3 @@
 
 __pycache__/
 *.py[cod]
-

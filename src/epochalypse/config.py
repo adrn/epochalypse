@@ -40,8 +40,8 @@ ROOT = Path(__file__).resolve().parents[2]
 #
 # The DELIVERED DATASET -- the parent sample and the DR4 scan law -- is ~12 GB
 # and changes from run to run (250 pc, then 500 pc, then wherever it lives
-# next), so it gets a root `--data-root` can move. The layout under that root
-# mirrors `data/`, so relocating it is a straight copy:
+# next), so it gets a root `--data-root` can move. Both files sit directly under
+# that root -- no subdirectory -- so relocating is a straight copy:
 #
 #     --data-root <scratch>/project-data/epochalypse
 #
@@ -60,11 +60,11 @@ def set_data_root(path) -> None:
 
 
 def g23h_sample():
-    return DATA_ROOT / "g23h_epochalypse_stars" / G23H_NAME
+    return DATA_ROOT / G23H_NAME
 
 
 def scanlaw_dr4():
-    return DATA_ROOT / "g23h_epochalypse_stars" / SCANLAW_NAME
+    return DATA_ROOT / SCANLAW_NAME
 
 
 # REFERENCE DATA: small, committed, versioned with the code. Never configured,
