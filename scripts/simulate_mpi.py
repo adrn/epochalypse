@@ -28,6 +28,7 @@ is amortized; a rank with only a few hundred sources is almost all compilation.
 Set OMP_NUM_THREADS=1 in the job script: with hundreds of ranks per node, the
 per-rank BLAS threads would otherwise oversubscribe the cores.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,8 +40,6 @@ from epochalypse import astrometry as astro
 from epochalypse import mpi
 from epochalypse import config as C
 from epochalypse.sources import ScanLawStore, SourceCatalog
-
-
 
 
 def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
@@ -57,7 +56,9 @@ def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
     results, skipped = [], []
     for population in populations:
         if skip_existing and C.shard_epochs(population, rank, size).exists():
-            print(f"[rank {rank:05d}] {population:<14} already done, skipping", flush=True)
+            print(
+                f"[rank {rank:05d}] {population:<14} already done, skipping", flush=True
+            )
             continue
 
         started = time.time()
@@ -65,18 +66,27 @@ def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
             for gaia_id in mine:
                 try:
                     epochs, truth = astro.simulate_source(
-                        population, gaia_id, catalog=catalog, scanlaw=scanlaw)
+                        population, gaia_id, catalog=catalog, scanlaw=scanlaw
+                    )
                 except Exception as error:
                     # One unusable source must not take down a rank of millions.
-                    skipped.append({"gaia_source_id": gaia_id,
-                                    "population": population, "reason": str(error)})
+                    skipped.append(
+                        {
+                            "gaia_source_id": gaia_id,
+                            "population": population,
+                            "reason": str(error),
+                        }
+                    )
                     continue
                 writer.add(epochs, truth)
         elapsed = time.time() - started
         results.append(writer.n_systems)
         rate = writer.n_systems / elapsed if elapsed else 0
-        print(f"[rank {rank:05d}] {population:<14} {writer.n_systems:>8,} systems "
-              f"in {elapsed:7.1f} s ({rate:6.1f}/s)", flush=True)
+        print(
+            f"[rank {rank:05d}] {population:<14} {writer.n_systems:>8,} systems "
+            f"in {elapsed:7.1f} s ({rate:6.1f}/s)",
+            flush=True,
+        )
 
     if skipped:
         import pandas as pd
@@ -90,16 +100,26 @@ def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--populations", nargs="+", choices=list(C.POPULATIONS),
-                        default=list(C.POPULATIONS))
-    parser.add_argument("--output-root", type=Path,
-                        help="write shards here instead of <repo>/outputs")
-    parser.add_argument("--limit", type=int,
-                        help="cap sources per rank (smoke tests only)")
-    parser.add_argument("--skip-existing", action="store_true",
-                        help="skip a (population, rank) whose output already exists, "
-                             "so a rerun only redoes the ranks that died")
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--populations",
+        nargs="+",
+        choices=list(C.POPULATIONS),
+        default=list(C.POPULATIONS),
+    )
+    parser.add_argument(
+        "--output-root", type=Path, help="write shards here instead of <repo>/outputs"
+    )
+    parser.add_argument(
+        "--limit", type=int, help="cap sources per rank (smoke tests only)"
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip a (population, rank) whose output already exists, "
+        "so a rerun only redoes the ranks that died",
+    )
     args = parser.parse_args(argv)
 
     comm, rank, size = mpi.mpi_context()
@@ -108,12 +128,18 @@ def main(argv=None):
 
     if rank == 0:
         n_sources = len(SourceCatalog())
-        mpi.banner(comm, size, n_sources, item="sources",
-                   populations=", ".join(args.populations))
+        mpi.banner(
+            comm,
+            size,
+            n_sources,
+            item="sources",
+            populations=", ".join(args.populations),
+        )
 
     started = time.time()
-    summary = run_rank(args.populations, rank, size,
-                       limit=args.limit, skip_existing=args.skip_existing)
+    summary = run_rank(
+        args.populations, rank, size, limit=args.limit, skip_existing=args.skip_existing
+    )
     summary["seconds"] = time.time() - started
 
     all_summaries = mpi.gather(comm, summary)
@@ -121,11 +147,15 @@ def main(argv=None):
         systems = sum(s["n_systems"] for s in all_summaries)
         skipped = sum(s["n_skipped"] for s in all_summaries)
         print(f"\ndone: {systems:,} systems across {size} rank(s)")
-        print(f"  slowest rank : {max(s['seconds'] for s in all_summaries) / 60:.1f} min")
+        print(
+            f"  slowest rank : {max(s['seconds'] for s in all_summaries) / 60:.1f} min"
+        )
         if skipped:
             print(f"  skipped      : {skipped:,} sources (see {C.skipped_dir()})")
-        print("  next         : python scripts/generate_catalog.py "
-              "--stages merge select figures")
+        print(
+            "  next         : python scripts/generate_catalog.py "
+            "--stages merge select figures"
+        )
     return 0
 
 

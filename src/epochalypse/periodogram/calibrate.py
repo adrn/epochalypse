@@ -27,13 +27,12 @@ The thresholds MUST be recalibrated for any change in the grid, the bounds, or
 the noise model. The look-elsewhere inflation grows with the trial count, and
 a different noise model would move the orbit channel by orders of magnitude.
 """
+
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pyarrow.dataset as ds
 
 from . import config as C
@@ -43,8 +42,10 @@ def thresholds_from_null(top_power, accel_delta_chi2, target_fp=None):
     """`(thr_orbit, thr_accel)` at a total false-positive rate of `target_fp`."""
     target_fp = C.TARGET_FP if target_fp is None else float(target_fp)
     q = 100.0 * (1.0 - target_fp / 2.0)
-    return (float(np.nanpercentile(np.asarray(top_power, float), q)),
-            float(np.nanpercentile(np.asarray(accel_delta_chi2, float), q)))
+    return (
+        float(np.nanpercentile(np.asarray(top_power, float), q)),
+        float(np.nanpercentile(np.asarray(accel_delta_chi2, float), q)),
+    )
 
 
 def calibrate(population="0_companion", target_fp=None):
@@ -104,8 +105,10 @@ def apply_calibration(frame, thr_orbit=None, thr_accel=None, baseline=None):
     frame["accel_significant_cal"] = accel
     frame["detected_cal"] = peak | accel
     frame["period_reliable_cal"] = (
-        (peak | accel) & (frame["klass"].to_numpy(object) == "unimodal")
-        & (frame["best_period"].to_numpy(float) < baseline))
+        (peak | accel)
+        & (frame["klass"].to_numpy(object) == "unimodal")
+        & (frame["best_period"].to_numpy(float) < baseline)
+    )
     return frame
 
 
@@ -137,19 +140,30 @@ def census(population, thr_orbit=None, thr_accel=None, columns=None):
     Reads only the columns the classification needs, so this runs over 5.7 M
     systems in seconds and is the cheapest check that a run came out sane.
     """
-    needed = ["top_power", "accel_delta_chi2", "klass", "best_period",
-              "snr_total_1", "snr_total_2"]
+    needed = [
+        "top_power",
+        "accel_delta_chi2",
+        "klass",
+        "best_period",
+        "snr_total_1",
+        "snr_total_2",
+    ]
     available = set(ds.dataset(C.chars_dir(population), format="parquet").schema.names)
-    frame = ds.dataset(C.chars_dir(population), format="parquet").to_table(
-        columns=[c for c in (columns or needed) if c in available]).to_pandas()
+    frame = (
+        ds.dataset(C.chars_dir(population), format="parquet")
+        .to_table(columns=[c for c in (columns or needed) if c in available])
+        .to_pandas()
+    )
     apply_calibration(frame, thr_orbit, thr_accel)
 
     def counts(f):
         narrow = f["peak_significant_cal"] & (f["klass"] == "unimodal")
-        return {"n": int(len(f)),
-                "undet": int((~f["detected_cal"]).sum()),
-                "narrow": int((f["detected_cal"] & narrow).sum()),
-                "broad": int((f["detected_cal"] & ~narrow).sum())}
+        return {
+            "n": int(len(f)),
+            "undet": int((~f["detected_cal"]).sum()),
+            "narrow": int((f["detected_cal"] & narrow).sum()),
+            "broad": int((f["detected_cal"] & ~narrow).sum()),
+        }
 
     out = {"population": population, "all": counts(frame)}
     if "snr_total_1" in frame.columns:
@@ -173,8 +187,11 @@ def load_characterization(population, columns=None, high_snr=False):
         needed = {"top_power", "accel_delta_chi2", "klass", "best_period"}
         if high_snr:
             needed |= {"snr_total_1", "snr_total_2"}
-        columns = [c for c in dict.fromkeys(list(columns) + sorted(needed))
-                   if c in set(dataset.schema.names)]
+        columns = [
+            c
+            for c in dict.fromkeys(list(columns) + sorted(needed))
+            if c in set(dataset.schema.names)
+        ]
     frame = dataset.to_table(columns=columns).to_pandas()
     if high_snr:
         frame = select_high_snr(frame)

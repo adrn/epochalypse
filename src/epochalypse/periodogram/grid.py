@@ -20,6 +20,7 @@ The grid depends on `config.P_MIN`, `P_MAX` and `N_SEGMENTS` and on nothing
 else -- not on the star, not on its epochs -- so it is global to a run. That is
 what lets the stored power arrays carry no period axis of their own.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -41,11 +42,14 @@ def frequency_segments(p_min=None, p_max=None, n_segments=None, dlog=None):
     p_max = C.P_MAX if p_max is None else float(p_max)
     n_segments = C.N_SEGMENTS if n_segments is None else int(n_segments)
     # ~688 trials per e-fold in period, the baseline density everywhere
-    dlog = (np.log10(p_max / p_min) / (C.BASELINE_N_PERIODS - 1)
-            if dlog is None else float(dlog))
+    dlog = (
+        np.log10(p_max / p_min) / (C.BASELINE_N_PERIODS - 1)
+        if dlog is None
+        else float(dlog)
+    )
     edges = np.exp(np.linspace(np.log(p_max), np.log(p_min), n_segments + 1))
     segments = []
-    for p_hi, p_lo in zip(edges[:-1], edges[1:]):   # descending P -> ascending nu
+    for p_hi, p_lo in zip(edges[:-1], edges[1:]):  # descending P -> ascending nu
         nu_lo, nu_hi = TWOPI / p_hi, TWOPI / p_lo
         # dlogP = dnu * P / (2 pi ln10), worst at the segment's low-frequency end
         dnu_max = dlog * TWOPI * np.log(10.0) / p_hi
@@ -63,18 +67,21 @@ def segment_periods(segments):
     whole reason the period axis can be stored once per run.
     """
     nu = np.concatenate([nu0 + np.arange(n) * dnu for nu0, dnu, n in segments])
-    nu = np.unique(nu)                              # ascending frequency, no repeats
-    return (TWOPI / nu)[::-1]                       # -> ascending period
+    nu = np.unique(nu)  # ascending frequency, no repeats
+    return (TWOPI / nu)[::-1]  # -> ascending period
 
 
 def describe(segments):
     """A one-screen summary of a search grid, for logs and the manifest."""
     periods = segment_periods(segments)
     dlog = np.diff(np.log10(periods))
-    return {"n_segments": len(segments),
-            "n_freq_evaluated": int(sum(s[2] for s in segments)),
-            "n_periods": int(periods.size),
-            "p_min_yr": float(periods[0]), "p_max_yr": float(periods[-1]),
-            "dlog_min": float(dlog.min()), "dlog_max": float(dlog.max()),
-            "target_dlog": float(np.log10(C.P_MAX / C.P_MIN)
-                                 / (C.BASELINE_N_PERIODS - 1))}
+    return {
+        "n_segments": len(segments),
+        "n_freq_evaluated": int(sum(s[2] for s in segments)),
+        "n_periods": int(periods.size),
+        "p_min_yr": float(periods[0]),
+        "p_max_yr": float(periods[-1]),
+        "dlog_min": float(dlog.min()),
+        "dlog_max": float(dlog.max()),
+        "target_dlog": float(np.log10(C.P_MAX / C.P_MIN) / (C.BASELINE_N_PERIODS - 1)),
+    }

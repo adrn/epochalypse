@@ -11,6 +11,7 @@ Arrow table. `astrometry.ShardWriter` builds epochs from DataFrames, the
 characterization writer joins truth columns, the power writer packs fixed-size
 lists -- all three used to carry their own copy of everything above.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,10 +20,17 @@ from pathlib import Path
 class BufferedParquetWriter:
     """Append row groups to `path`, atomically. Subclass and define `_table`."""
 
-    def __init__(self, path, flush_every, compression, compression_level=None,
-                 mkdir=True, **writer_kwargs):
+    def __init__(
+        self,
+        path,
+        flush_every,
+        compression,
+        compression_level=None,
+        mkdir=True,
+        **writer_kwargs,
+    ):
         self.path = Path(path)
-        if mkdir:                      # a disabled writer creates nothing
+        if mkdir:  # a disabled writer creates nothing
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._tmp = self.path.with_suffix(".parquet.tmp")
         self._flush_every = int(flush_every)
@@ -50,9 +58,12 @@ class BufferedParquetWriter:
             return
         table = self._table(self._rows)
         if self._writer is None:
-            self._writer = pq.ParquetWriter(self._tmp, table.schema,
-                                            compression=self._compression,
-                                            **self._writer_kwargs)
+            self._writer = pq.ParquetWriter(
+                self._tmp,
+                table.schema,
+                compression=self._compression,
+                **self._writer_kwargs,
+            )
         self._writer.write_table(table)
         self._rows = []
 

@@ -14,6 +14,7 @@ Stages:
   merge             each population's 320 shards -> one parquet, plus the
                     high-SNR views (small enough to be worth materializing)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,12 +33,18 @@ def stage_calibrate(args):
     path = C.calibration_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(calibration, indent=2) + "\n")
-    print(f"thresholds from {calibration['n_null_systems']:,} companion-free systems "
-          f"@ FP={calibration['target_fp']:.1%}")
-    print(f"  orbit Delta-chi2 > {calibration['thr_orbit']:10.1f}   "
-          f"(null rate {calibration['realized_fp_peak']:.3%})")
-    print(f"  accel Delta-chi2 > {calibration['thr_accel']:10.1f}   "
-          f"(null rate {calibration['realized_fp_accel']:.3%})")
+    print(
+        f"thresholds from {calibration['n_null_systems']:,} companion-free systems "
+        f"@ FP={calibration['target_fp']:.1%}"
+    )
+    print(
+        f"  orbit Delta-chi2 > {calibration['thr_orbit']:10.1f}   "
+        f"(null rate {calibration['realized_fp_peak']:.3%})"
+    )
+    print(
+        f"  accel Delta-chi2 > {calibration['thr_accel']:10.1f}   "
+        f"(null rate {calibration['realized_fp_accel']:.3%})"
+    )
     print(f"  either channel   : {calibration['realized_fp']:.3%} of the null")
     print(f"-> {path}")
     return calibration
@@ -45,15 +52,21 @@ def stage_calibrate(args):
 
 def stage_census(args):
     calibration = json.loads(C.calibration_path().read_text())
-    print(f"{'population':<26}{'n':>12}{'undetected':>14}{'localized':>12}{'not localized':>16}")
+    print(
+        f"{'population':<26}{'n':>12}{'undetected':>14}{'localized':>12}{'not localized':>16}"
+    )
     for population in args.populations:
-        counts = cal.census(population, calibration["thr_orbit"], calibration["thr_accel"])
+        counts = cal.census(
+            population, calibration["thr_orbit"], calibration["thr_accel"]
+        )
         for label, key in (("", "all"), (" (high-SNR)", "high_snr")):
             if key not in counts:
                 continue
             c = counts[key]
-            print(f"{population + label:<26}{c['n']:>12,}{c['undet']:>14,}"
-                  f"{c['narrow']:>12,}{c['broad']:>16,}")
+            print(
+                f"{population + label:<26}{c['n']:>12,}{c['undet']:>14,}"
+                f"{c['narrow']:>12,}{c['broad']:>16,}"
+            )
 
 
 def stage_merge(args):
@@ -68,10 +81,17 @@ def stage_merge(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stages", nargs="+", choices=STAGES, default=["calibrate", "census"])
-    parser.add_argument("--populations", nargs="+", choices=list(C.POPULATIONS),
-                        default=list(C.POPULATIONS))
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--stages", nargs="+", choices=STAGES, default=["calibrate", "census"]
+    )
+    parser.add_argument(
+        "--populations",
+        nargs="+",
+        choices=list(C.POPULATIONS),
+        default=list(C.POPULATIONS),
+    )
     parser.add_argument("--catalog-root", type=Path)
     parser.add_argument("--output-root", type=Path)
     args = parser.parse_args(argv)
@@ -83,13 +103,16 @@ def main(argv=None):
 
     if C.manifest_path().exists():
         manifest = json.loads(C.manifest_path().read_text())
-        print(f"run: {manifest['written']}  grid {manifest['grid']['n_periods']:,} periods  "
-              f"curves={manifest['power']['mode']}\n")
+        print(
+            f"run: {manifest['written']}  grid {manifest['grid']['n_periods']:,} periods  "
+            f"curves={manifest['power']['mode']}\n"
+        )
 
     for stage in args.stages:
         print(f"=== {stage} ===")
-        {"calibrate": stage_calibrate, "census": stage_census,
-         "merge": stage_merge}[stage](args)
+        {"calibrate": stage_calibrate, "census": stage_census, "merge": stage_merge}[
+            stage
+        ](args)
         print()
     return 0
 

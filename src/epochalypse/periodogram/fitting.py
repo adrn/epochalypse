@@ -16,6 +16,7 @@ The acceleration channel, by contrast, is the *same code* in both pipelines, so
 a difference between the two output tables is attributable to the period search
 rather than to the analysis built around it.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -23,9 +24,13 @@ import numpy as np
 from . import config as C
 
 
-
-def epoch_arrays(obs_time_tcb, scan_pos_angle, parallax_factor_al,
-                 centroid_pos_al, centroid_pos_error_al):
+def epoch_arrays(
+    obs_time_tcb,
+    scan_pos_angle,
+    parallax_factor_al,
+    centroid_pos_al,
+    centroid_pos_error_al,
+):
     """The along-scan fit arrays, from an epoch table's five columns.
 
     Returns `t` (yr from the DR4 reference epoch), `psi` (rad), the parallax
@@ -37,16 +42,26 @@ def epoch_arrays(obs_time_tcb, scan_pos_angle, parallax_factor_al,
     overhead, and the shard reader already holds the columns as arrays.
     """
     t = (np.asarray(obs_time_tcb, float) - C.GAIA_EPOCH_TCB_JD) / C.DAYS_PER_YEAR
-    return (t, np.asarray(scan_pos_angle, float), np.asarray(parallax_factor_al, float),
-            np.asarray(centroid_pos_al, float), np.asarray(centroid_pos_error_al, float))
+    return (
+        t,
+        np.asarray(scan_pos_angle, float),
+        np.asarray(parallax_factor_al, float),
+        np.asarray(centroid_pos_al, float),
+        np.asarray(centroid_pos_error_al, float),
+    )
 
 
 def astrometric_design_matrix(t, scan_angle, pf):
     """Five-parameter along-scan design: [sin psi, cos psi, sin psi t, cos psi t, pf]."""
-    return np.column_stack([
-        np.sin(scan_angle), np.cos(scan_angle),
-        np.sin(scan_angle) * t, np.cos(scan_angle) * t, pf,
-    ])
+    return np.column_stack(
+        [
+            np.sin(scan_angle),
+            np.cos(scan_angle),
+            np.sin(scan_angle) * t,
+            np.cos(scan_angle) * t,
+            pf,
+        ]
+    )
 
 
 def _wls_chi2(X, w, y):
@@ -72,8 +87,9 @@ def acceleration_delta_chi2(t, scan_angle, pf, y, yerr):
     w = 1.0 / np.square(yerr)
     X5 = astrometric_design_matrix(t, scan_angle, pf)
     chi2_5, _ = _wls_chi2(X5, w, y)
-    Xacc = np.hstack([X5, np.column_stack([np.sin(scan_angle) * t**2,
-                                           np.cos(scan_angle) * t**2])])
+    Xacc = np.hstack(
+        [X5, np.column_stack([np.sin(scan_angle) * t**2, np.cos(scan_angle) * t**2])]
+    )
     chi2_7, _ = _wls_chi2(Xacc, w, y)
     return chi2_5 - chi2_7
 
@@ -101,7 +117,7 @@ def find_peaks(periods, power, min_separation_dex=None):
     if min_separation_dex is None:
         min_separation_dex = C.MIN_SEPARATION_DEX
     idx = _local_maxima(power)
-    gmax = int(np.argmax(power))            # keep the global argmax even on a boundary
+    gmax = int(np.argmax(power))  # keep the global argmax even on a boundary
     if gmax not in idx:
         idx = np.append(idx, gmax)
     idx = idx[np.argsort(-power[idx])]
@@ -111,8 +127,10 @@ def find_peaks(periods, power, min_separation_dex=None):
         if any(abs(log_p[i] - log_p[j]) < min_separation_dex for j in accepted):
             continue
         accepted.append(i)
-    return [{"index": int(i), "period": float(periods[i]), "power": float(power[i])}
-            for i in accepted]
+    return [
+        {"index": int(i), "period": float(periods[i]), "power": float(power[i])}
+        for i in accepted
+    ]
 
 
 def period_in_competitive_region(periods, power, p_target, width_delta=None):
@@ -128,6 +146,6 @@ def period_in_competitive_region(periods, power, p_target, width_delta=None):
     if not np.isfinite(p_target) or p_target <= 0:
         return np.nan
     if p_target < periods[0] or p_target > periods[-1]:
-        return False                         # beyond the tested grid -> not bracketed
+        return False  # beyond the tested grid -> not bracketed
     j = int(np.abs(np.log(periods) - np.log(p_target)).argmin())
     return bool(power[j] > power.max() - width_delta)

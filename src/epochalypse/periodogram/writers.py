@@ -31,6 +31,7 @@ Both writers follow the generator's convention: write `.parquet.tmp` and rename
 on success, so a rank killed mid-write leaves no file rather than a truncated
 one that looks complete. That is what makes `--skip-existing` trustworthy.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -60,11 +61,18 @@ def source_id_ranks(gaia_source_ids, seed=None):
     prefix = f"{int(seed)}:".encode("utf-8")
     ids = np.asarray(gaia_source_ids)
     return np.fromiter(
-        (int.from_bytes(
-            hashlib.blake2s(prefix + str(int(i)).encode("utf-8"), digest_size=8).digest(),
-            "little")
-         for i in ids),
-        dtype=np.uint64, count=len(ids))
+        (
+            int.from_bytes(
+                hashlib.blake2s(
+                    prefix + str(int(i)).encode("utf-8"), digest_size=8
+                ).digest(),
+                "little",
+            )
+            for i in ids
+        ),
+        dtype=np.uint64,
+        count=len(ids),
+    )
 
 
 def in_paper_subsample(gaia_source_ids, seed=None, cutoff=None):
@@ -109,8 +117,12 @@ class CharacterizationWriter(BufferedParquetWriter):
     """
 
     def __init__(self, path, population, shard, truths):
-        super().__init__(path, C.CHARS_FLUSH_EVERY, C.PARQUET_COMPRESSION,
-                         compression_level=C.PARQUET_COMPRESSION_LEVEL)
+        super().__init__(
+            path,
+            C.CHARS_FLUSH_EVERY,
+            C.PARQUET_COMPRESSION,
+            compression_level=C.PARQUET_COMPRESSION_LEVEL,
+        )
         self._shard = shard
         self._truths = truths[truth_columns(population)]
 
@@ -151,9 +163,14 @@ class PowerWriter(BufferedParquetWriter):
         self.mode = C.POWER_MODE if mode is None else mode
         self.dtype = np.dtype(C.POWER_DTYPE if dtype is None else dtype)
         self.n_stored = int(n_periods)
-        super().__init__(path, C.POWER_FLUSH_EVERY, C.PARQUET_COMPRESSION,
-                         compression_level=C.PARQUET_COMPRESSION_LEVEL,
-                         mkdir=self.mode != "none", use_dictionary=False)
+        super().__init__(
+            path,
+            C.POWER_FLUSH_EVERY,
+            C.PARQUET_COMPRESSION,
+            compression_level=C.PARQUET_COMPRESSION_LEVEL,
+            mkdir=self.mode != "none",
+            use_dictionary=False,
+        )
 
     @property
     def n_systems(self):
@@ -172,16 +189,19 @@ class PowerWriter(BufferedParquetWriter):
     def add(self, gaia_source_id, shard_row, power):
         if self.mode == "none" or power is None:
             return
-        super().add((int(gaia_source_id), int(shard_row),
-                     np.asarray(power, dtype=self.dtype)))
+        super().add(
+            (int(gaia_source_id), int(shard_row), np.asarray(power, dtype=self.dtype))
+        )
 
     def _table(self, rows):
         flat = pa.array(np.concatenate([power for _, _, power in rows]))
-        return pa.table({
-            "gaia_source_id": pa.array([i for i, _, _ in rows], pa.int64()),
-            "shard_row": pa.array([r for _, r, _ in rows], pa.int32()),
-            "power": pa.FixedSizeListArray.from_arrays(flat, self.n_stored),
-        })
+        return pa.table(
+            {
+                "gaia_source_id": pa.array([i for i, _, _ in rows], pa.int64()),
+                "shard_row": pa.array([r for _, r, _ in rows], pa.int32()),
+                "power": pa.FixedSizeListArray.from_arrays(flat, self.n_stored),
+            }
+        )
 
 
 def write_period_grid(periods, path=None):
@@ -193,8 +213,12 @@ def write_period_grid(periods, path=None):
     path = C.period_grid_path() if path is None else Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     grid = np.asarray(periods, float)
-    table = pa.table({"index": pa.array(np.arange(len(grid)), pa.int32()),
-                      "period_yr": pa.array(grid, pa.float64())})
+    table = pa.table(
+        {
+            "index": pa.array(np.arange(len(grid)), pa.int32()),
+            "period_yr": pa.array(grid, pa.float64()),
+        }
+    )
     tmp = path.with_suffix(".parquet.tmp")
     pq.write_table(table, tmp, compression=C.PARQUET_COMPRESSION)
     tmp.replace(path)

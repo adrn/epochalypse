@@ -44,7 +44,5 @@ dev = [
     "ruff>=0.16.4",
 ]
 
-# No [project.scripts]: the entry points live in scripts/, outside the
-# package, and console scripts would mean moving them back inside it. For an
-# MPI launch `mpirun python scripts/run_mpi.py` also says more about what is
-# running than a generated shim would.
+[tool.ruff]
+extend-exclude = ["old", "data", "outputs"]

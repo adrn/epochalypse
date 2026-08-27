@@ -10,6 +10,7 @@ That much is identical between the two stages, so it lives here rather than
 being copied. What differs -- what a unit of work is, and what to do with it --
 stays in the scripts.
 """
+
 from __future__ import annotations
 
 import os
@@ -51,15 +52,19 @@ def banner(comm, size, n_items, item="sources", **extra):
     With tens of ranks per node the per-rank BLAS thread pools would
     oversubscribe the cores, and that is invisible until the job is slow.
     """
-    print(f"ranks       : {size}" + ("" if comm else "  (mpi4py not found -- "
-                                                     "running as a single rank)"))
+    print(
+        f"ranks       : {size}"
+        + ("" if comm else "  (mpi4py not found -- running as a single rank)")
+    )
     print(f"{item:<12}: {n_items:,}  ->  ~{n_items // max(size, 1):,} per rank")
     for key, value in extra.items():
         print(f"{key:<12}: {value}")
     threads = os.environ.get("OMP_NUM_THREADS", "unset")
-    print(f"threads/rank: OMP_NUM_THREADS={threads}"
-          + ("" if threads == "1" else "   <- set this to 1 to avoid oversubscription"),
-          flush=True)
+    print(
+        f"threads/rank: OMP_NUM_THREADS={threads}"
+        + ("" if threads == "1" else "   <- set this to 1 to avoid oversubscription"),
+        flush=True,
+    )
 
 
 def gather(comm, summary):

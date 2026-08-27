@@ -30,6 +30,7 @@ The reader streams row groups rather than reading the file: a shard is ~100 MB
 of epochs, so reading it whole would be fine, but streaming keeps a rank's
 resident memory at one row group regardless of how the generator was configured.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,8 +44,13 @@ from . import fitting
 
 # The five epoch columns the fit needs. `gaia_source_id` is read only to verify
 # the ordering assumption above, and only on the mixed row group.
-EPOCH_COLUMNS = ["obs_time_tcb", "scan_pos_angle", "parallax_factor_al",
-                 "centroid_pos_al", "centroid_pos_error_al"]
+EPOCH_COLUMNS = [
+    "obs_time_tcb",
+    "scan_pos_angle",
+    "parallax_factor_al",
+    "centroid_pos_al",
+    "centroid_pos_error_al",
+]
 
 
 def discover_shards(population):
@@ -110,7 +116,8 @@ class ShardReader:
         if counted != len(self.truths):
             raise RuntimeError(
                 f"{self.epochs_path.name}: row groups hold {counted} systems but the "
-                f"truth shard has {len(self.truths)}; the pair is not from one writer")
+                f"truth shard has {len(self.truths)}; the pair is not from one writer"
+            )
 
     # ------------------------------------------------------------------
     def _group_spans(self):
@@ -131,8 +138,11 @@ class ShardReader:
             if stats is not None and stats.min == stats.max:
                 spans.append((group, 1))
                 continue
-            ids = self._handle.read_row_group(
-                group, columns=["gaia_source_id"]).column(0).to_numpy(zero_copy_only=False)
+            ids = (
+                self._handle.read_row_group(group, columns=["gaia_source_id"])
+                .column(0)
+                .to_numpy(zero_copy_only=False)
+            )
             spans.append((group, 1 + int((ids[1:] != ids[:-1]).sum())))
         return spans
 
@@ -170,17 +180,21 @@ class ShardReader:
         groups, index, lo, hi = self._part_groups(part, n_parts)
         for group in groups:
             block = self._handle.read_row_group(
-                group, columns=["gaia_source_id"] + EPOCH_COLUMNS)
+                group, columns=["gaia_source_id"] + EPOCH_COLUMNS
+            )
             ids = block.column(0).to_numpy(zero_copy_only=False)
-            columns = [block.column(1 + i).to_numpy() for i in range(len(EPOCH_COLUMNS))]
+            columns = [
+                block.column(1 + i).to_numpy() for i in range(len(EPOCH_COLUMNS))
+            ]
             # boundaries between consecutive systems inside this row group
             edges = np.flatnonzero(ids[1:] != ids[:-1]) + 1
             edges = np.concatenate([[0], edges, [len(ids)]])
             for a, b in zip(edges[:-1], edges[1:]):
                 if lo <= index < hi:
-                    order = np.argsort(columns[0][a:b])      # by obs_time_tcb
+                    order = np.argsort(columns[0][a:b])  # by obs_time_tcb
                     t, psi, pf, y, yerr = fitting.epoch_arrays(
-                        *[c[a:b][order] for c in columns])
+                        *[c[a:b][order] for c in columns]
+                    )
                     yield index, self.truths.iloc[index], t, psi, pf, y, yerr
                 index += 1
 

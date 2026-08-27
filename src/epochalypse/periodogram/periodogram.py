@@ -49,6 +49,7 @@ would badly understate a long-period plateau. `period_constraint` below
 measures the same quantity as an actual log-period measure -- a sum of cell
 widths -- and reduces to the baseline definition on a uniform log grid.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -75,14 +76,14 @@ def build_model(t, psi, pf, y, yerr):
     from spleaf import term
 
     cth, sth = np.cos(psi), np.sin(psi)
-    model = AstroModel(t, y, cth, sth,
-                       err=term.Error(yerr),
-                       excess_noise=term.Jitter(0.0))
-    model.add_lin(pf, 'plx')
-    model.add_lin(cth, 'delta')
-    model.add_lin(sth, 'alpha')
-    model.add_lin(t * cth, 'mu_delta')
-    model.add_lin(t * sth, 'mu_alpha')
+    model = AstroModel(
+        t, y, cth, sth, err=term.Error(yerr), excess_noise=term.Jitter(0.0)
+    )
+    model.add_lin(pf, "plx")
+    model.add_lin(cth, "delta")
+    model.add_lin(sth, "alpha")
+    model.add_lin(t * cth, "mu_delta")
+    model.add_lin(t * sth, "mu_alpha")
     model.fit_lin()
 
     return model
@@ -117,7 +118,7 @@ def kepmodel_power(t, psi, pf, y, yerr, segments=None):
         zs.append(z)
     nu, z = np.concatenate(nus), np.concatenate(zs)
 
-    order = np.argsort(nu)                          # merge segments, drop shared edges
+    order = np.argsort(nu)  # merge segments, drop shared edges
     nu, z = nu[order], z[order]
     keep = np.concatenate([[True], np.diff(nu) > 0])
     nu, z = nu[keep], z[keep]
@@ -127,9 +128,11 @@ def kepmodel_power(t, psi, pf, y, yerr, segments=None):
     except Exception:
         fap = np.nan
 
-    return (TWOPI / nu)[::-1], (z * chi2_base)[::-1], {
-        "chi2_base": chi2_base,
-        "fap": fap, "n_freq": int(nu.size)}
+    return (
+        (TWOPI / nu)[::-1],
+        (z * chi2_base)[::-1],
+        {"chi2_base": chi2_base, "fap": fap, "n_freq": int(nu.size)},
+    )
 
 
 def period_constraint(periods, power, width_delta=None, edge_frac=None):
@@ -154,7 +157,7 @@ def period_constraint(periods, power, width_delta=None, edge_frac=None):
     edge_frac = C.EDGE_FRAC if edge_frac is None else edge_frac
 
     logp = np.log10(periods)
-    cell = np.empty_like(logp)                      # midpoint (trapezoidal) widths
+    cell = np.empty_like(logp)  # midpoint (trapezoidal) widths
     cell[1:-1] = 0.5 * (logp[2:] - logp[:-2])
     cell[0] = logp[1] - logp[0]
     cell[-1] = logp[-1] - logp[-2]
@@ -162,8 +165,10 @@ def period_constraint(periods, power, width_delta=None, edge_frac=None):
     gi = int(np.argmax(power))
     comp = power > power[gi] - width_delta
     span = logp[-1] - logp[0]
-    at_edge = bool(logp[gi] - logp[0] <= edge_frac * span
-                   or logp[-1] - logp[gi] <= edge_frac * span)
+    at_edge = bool(
+        logp[gi] - logp[0] <= edge_frac * span
+        or logp[-1] - logp[gi] <= edge_frac * span
+    )
     return float(cell[comp].sum()), float(periods[gi]), at_edge
 
 
@@ -185,17 +190,25 @@ def classify_periodogram(periods, power, n_epochs):
     """
     width_dex, _, best_at_edge = period_constraint(periods, power)
     peaks = fitting.find_peaks(periods, power)
-    if not peaks:                                   # cannot happen: argmax is always kept
-        return {"klass": "undetected", "best_period": np.nan, "n_competitive": 0,
-                "top_power": np.nan, "delta_bic_best": np.nan,
-                "width_dex": width_dex, "best_at_edge": best_at_edge,
-                "top_periods": [], "top_powers": []}
+    if not peaks:  # cannot happen: argmax is always kept
+        return {
+            "klass": "undetected",
+            "best_period": np.nan,
+            "n_competitive": 0,
+            "top_power": np.nan,
+            "delta_bic_best": np.nan,
+            "width_dex": width_dex,
+            "best_at_edge": best_at_edge,
+            "top_periods": [],
+            "top_powers": [],
+        }
 
     best = peaks[0]
     # BIC relative to the 5-par model: k orbit params cost k ln N.
     delta_bic_best = best["power"] - C.N_ORBIT_PARAMS * np.log(max(n_epochs, 2))
-    competitive = [p for p in peaks
-                   if best["power"] - p["power"] < C.DELTA_POWER_UNIMODAL]
+    competitive = [
+        p for p in peaks if best["power"] - p["power"] < C.DELTA_POWER_UNIMODAL
+    ]
 
     if delta_bic_best < C.DELTA_BIC_DETECT:
         klass = "undetected"
@@ -207,16 +220,22 @@ def classify_periodogram(periods, power, n_epochs):
         klass = "unimodal"
 
     top = peaks[:5]
-    return {"klass": klass, "best_period": best["period"],
-            "n_competitive": int(len(competitive)), "top_power": best["power"],
-            "delta_bic_best": float(delta_bic_best),
-            "width_dex": width_dex, "best_at_edge": best_at_edge,
-            "top_periods": [p["period"] for p in top],
-            "top_powers": [p["power"] for p in top]}
+    return {
+        "klass": klass,
+        "best_period": best["period"],
+        "n_competitive": int(len(competitive)),
+        "top_power": best["power"],
+        "delta_bic_best": float(delta_bic_best),
+        "width_dex": width_dex,
+        "best_at_edge": best_at_edge,
+        "top_periods": [p["period"] for p in top],
+        "top_powers": [p["power"] for p in top],
+    }
 
 
-def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
-                        want_power=False):
+def characterize_system(
+    t, psi, pf, y, yerr, truth=None, segments=None, want_power=False
+):
     """Search, classify, and test one system. Returns `(record, power)`.
 
     `record` is the one row this system contributes to the characterization
@@ -231,8 +250,7 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
     """
     n = len(y)
 
-    periods, power, info = kepmodel_power(t, psi, pf, y, yerr,
-                                          segments=segments)
+    periods, power, info = kepmodel_power(t, psi, pf, y, yerr, segments=segments)
     res = classify_periodogram(periods, power, n)
     accel_dchi2 = fitting.acceleration_delta_chi2(t, psi, pf, y, yerr)
     accel_dbic = accel_dchi2 - 2.0 * np.log(max(n, 2))
@@ -242,9 +260,14 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
     # `calibrate.apply_calibration`, once the control population has run and
     # the thresholds exist; these two are kept because the in-house tables
     # carry them and the two runs stay column-comparable.
-    detected = (res["delta_bic_best"] >= C.DELTA_BIC_DETECT) or (accel_dbic >= C.DELTA_BIC_DETECT)
-    period_reliable = bool(detected and res["klass"] == "unimodal"
-                           and res["best_period"] < C.DR4_BASELINE_YEARS)
+    detected = (res["delta_bic_best"] >= C.DELTA_BIC_DETECT) or (
+        accel_dbic >= C.DELTA_BIC_DETECT
+    )
+    period_reliable = bool(
+        detected
+        and res["klass"] == "unimodal"
+        and res["best_period"] < C.DR4_BASELINE_YEARS
+    )
 
     record = {
         "n_epochs": n,
@@ -262,11 +285,13 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
         "period_reliable": period_reliable,
         "kepmodel_fap": info["fap"],
     }
-    for k in range(2):                              # the two tallest peaks, for the truth match
-        record[f"peak{k + 1}_period"] = (res["top_periods"][k]
-                                         if k < len(res["top_periods"]) else np.nan)
-        record[f"peak{k + 1}_power"] = (res["top_powers"][k]
-                                        if k < len(res["top_powers"]) else np.nan)
+    for k in range(2):  # the two tallest peaks, for the truth match
+        record[f"peak{k + 1}_period"] = (
+            res["top_periods"][k] if k < len(res["top_periods"]) else np.nan
+        )
+        record[f"peak{k + 1}_power"] = (
+            res["top_powers"][k] if k < len(res["top_powers"]) else np.nan
+        )
 
     # Truth-based flags. `period_k_in_bound` is the honest question to ask of a
     # broad system -- does the competitive REGION bracket the truth -- where a
@@ -283,17 +308,18 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
         keys = truth.index if hasattr(truth, "index") else truth
         ln_tol = np.log(C.PERIOD_RECOVER_TOL)
         for k in (1, 2):
-            if f"period_{k}" not in keys:        # population-level, so schema-stable
+            if f"period_{k}" not in keys:  # population-level, so schema-stable
                 continue
             record[f"period_{k}_in_bound"] = np.nan
             record[f"period_{k}_recovered"] = np.nan
             pk = float(truth[f"period_{k}"])
-            if not np.isfinite(pk):              # no companion injected in this slot
+            if not np.isfinite(pk):  # no companion injected in this slot
                 continue
             in_bound = fitting.period_in_competitive_region(periods, power, pk)
             record[f"period_{k}_in_bound"] = float(in_bound)
             with np.errstate(invalid="ignore", divide="ignore"):
                 record[f"period_{k}_recovered"] = float(
-                    abs(np.log(res["best_period"] / pk)) < ln_tol)
+                    abs(np.log(res["best_period"] / pk)) < ln_tol
+                )
 
     return record, (power if want_power else None)

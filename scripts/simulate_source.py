@@ -9,6 +9,7 @@ because a truth row is easier to check by reading it than by opening a parquet
 shard. Output is a deterministic function of (master seeds, population, source
 id), so what this prints is exactly what the shard holds.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,11 +20,13 @@ from epochalypse.sources import ScanLawStore, SourceCatalog
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("gaia_id", help="Gaia DR3 source id of the host star")
-    parser.add_argument("--population", nargs="+", default=["1_companion"],
-                        choices=list(C.POPULATIONS))
+    parser.add_argument(
+        "--population", nargs="+", default=["1_companion"], choices=list(C.POPULATIONS)
+    )
     args = parser.parse_args(argv)
 
     catalog, scanlaw = SourceCatalog(), ScanLawStore()
@@ -33,22 +36,31 @@ def main(argv=None):
         raise SystemExit(f"no DR4 scan law for gaia_source_id {args.gaia_id}")
 
     for population in args.population:
-        epochs, truth = astro.simulate_source(population, args.gaia_id,
-                                              catalog=catalog, scanlaw=scanlaw)
+        epochs, truth = astro.simulate_source(
+            population, args.gaia_id, catalog=catalog, scanlaw=scanlaw
+        )
         print(f"\n=== {truth['system_id']} ===")
-        print(f"  host      : M = {truth['mass_st_msun']:.3f} Msun, "
-              f"R = {truth['radius_st_rsun']:.3f} Rsun, "
-              f"parallax = {truth['parallax_mas']:.3f} mas")
-        print(f"  epochs    : {len(epochs)} FoV transits, "
-              f"sigma_single = {truth['sigma_single_mas']:.4f} mas")
-        print(f"  seeds     : system {truth['system_seed']} "
-              f"(noise {truth['noise_seed']}, obs {truth['observation_seed']})")
+        print(
+            f"  host      : M = {truth['mass_st_msun']:.3f} Msun, "
+            f"R = {truth['radius_st_rsun']:.3f} Rsun, "
+            f"parallax = {truth['parallax_mas']:.3f} mas"
+        )
+        print(
+            f"  epochs    : {len(epochs)} FoV transits, "
+            f"sigma_single = {truth['sigma_single_mas']:.4f} mas"
+        )
+        print(
+            f"  seeds     : system {truth['system_seed']} "
+            f"(noise {truth['noise_seed']}, obs {truth['observation_seed']})"
+        )
         for k in range(1, truth["n_planets"] + 1):
-            print(f"  companion {k}: M = {truth[f'mass_pl_{k}']:.4g} Mjup, "
-                  f"a = {truth[f'sma_{k}']:.4g} AU, "
-                  f"P = {truth[f'period_{k}']:.4g} yr, "
-                  f"e = {truth[f'ecc_{k}']:.3f}, "
-                  f"SNR_tot = {truth[f'snr_total_{k}']:.3g}")
+            print(
+                f"  companion {k}: M = {truth[f'mass_pl_{k}']:.4g} Mjup, "
+                f"a = {truth[f'sma_{k}']:.4g} AU, "
+                f"P = {truth[f'period_{k}']:.4g} yr, "
+                f"e = {truth[f'ecc_{k}']:.3f}, "
+                f"SNR_tot = {truth[f'snr_total_{k}']:.3g}"
+            )
         if truth["n_planets"] == 0:
             print("  companion : none (noise-only control)")
     return 0

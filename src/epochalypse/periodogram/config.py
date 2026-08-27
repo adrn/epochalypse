@@ -62,13 +62,19 @@ def shard_dir(population):
 
 
 def shard_epochs(population, shard, n_shards):
-    return _cat.shard_epochs(population, shard, n_shards) if CATALOG_ROOT == _cat.OUTPUT_ROOT \
+    return (
+        _cat.shard_epochs(population, shard, n_shards)
+        if CATALOG_ROOT == _cat.OUTPUT_ROOT
         else shard_dir(population) / f"epochs_rank{shard:05d}_of_{n_shards:05d}.parquet"
+    )
 
 
 def shard_truths(population, shard, n_shards):
-    return _cat.shard_truths(population, shard, n_shards) if CATALOG_ROOT == _cat.OUTPUT_ROOT \
+    return (
+        _cat.shard_truths(population, shard, n_shards)
+        if CATALOG_ROOT == _cat.OUTPUT_ROOT
         else shard_dir(population) / f"truths_rank{shard:05d}_of_{n_shards:05d}.parquet"
+    )
 
 
 # ==========================================================================
@@ -104,11 +110,17 @@ def _piece(shard, n_shards, part, n_parts):
 
 
 def chars_shard(population, shard, n_shards, part=0, n_parts=1):
-    return chars_dir(population) / f"chars_{_piece(shard, n_shards, part, n_parts)}.parquet"
+    return (
+        chars_dir(population)
+        / f"chars_{_piece(shard, n_shards, part, n_parts)}.parquet"
+    )
 
 
 def power_shard(population, shard, n_shards, part=0, n_parts=1):
-    return power_dir(population) / f"power_{_piece(shard, n_shards, part, n_parts)}.parquet"
+    return (
+        power_dir(population)
+        / f"power_{_piece(shard, n_shards, part, n_parts)}.parquet"
+    )
 
 
 def period_grid_path():
@@ -183,14 +195,14 @@ BASELINE_N_PERIODS = 12383
 # `classify_periodogram`'s own internal thresholds. These are NOT the detection
 # thresholds -- those are calibrated on the companion-free control, in
 # `calibrate.py`, and are far above DELTA_BIC_DETECT.
-DELTA_BIC_DETECT = 10.0        # BIC improvement before a peak counts at all
-DELTA_POWER_UNIMODAL = 10.0    # Delta-chi^2 within which a second peak competes
-MIN_SEPARATION_DEX = 0.1       # peaks closer than this in log P are merged
-WIDTH_DELTA = 4.0              # Delta-chi^2 defining the competitive region
-WIDTH_CONSTRAINED_DEX = 0.05   # competitive width below which a period is "localized"
-EDGE_FRAC = 0.02               # argmax within this fraction of the log range = railed
-N_ORBIT_PARAMS = 4             # circular Thiele-Innes columns
-PERIOD_RECOVER_TOL = 1.2       # |ln(P_best / P_true)| < ln(tol) counts as recovered
+DELTA_BIC_DETECT = 10.0  # BIC improvement before a peak counts at all
+DELTA_POWER_UNIMODAL = 10.0  # Delta-chi^2 within which a second peak competes
+MIN_SEPARATION_DEX = 0.1  # peaks closer than this in log P are merged
+WIDTH_DELTA = 4.0  # Delta-chi^2 defining the competitive region
+WIDTH_CONSTRAINED_DEX = 0.05  # competitive width below which a period is "localized"
+EDGE_FRAC = 0.02  # argmax within this fraction of the log range = railed
+N_ORBIT_PARAMS = 4  # circular Thiele-Innes columns
+PERIOD_RECOVER_TOL = 1.2  # |ln(P_best / P_true)| < ln(tol) counts as recovered
 
 # Null false-positive rate the detection thresholds are calibrated to, split
 # evenly between the two independent channels (periodogram peak, acceleration).
@@ -201,8 +213,8 @@ TARGET_FP = 0.01
 # ==========================================================================
 PARQUET_COMPRESSION = "zstd"
 PARQUET_COMPRESSION_LEVEL = 3
-CHARS_FLUSH_EVERY = 5000   # systems buffered before a characterization row-group flush
-POWER_FLUSH_EVERY = 500    # ~27 MB of float32 power per row group
+CHARS_FLUSH_EVERY = 5000  # systems buffered before a characterization row-group flush
+POWER_FLUSH_EVERY = 500  # ~27 MB of float32 power per row group
 
 # What to keep of the raw Delta-chi^2 curves. A curve is 53 kB per system after
 # zstd, so "all" is ~915 GB over the full catalog -- ten times the size of the
@@ -211,8 +223,8 @@ POWER_FLUSH_EVERY = 500    # ~27 MB of float32 power per row group
 # be regenerated from its epochs in 0.34 s (see `periodogram_source.py`).
 # POWER_DTYPE shrinks "all" without changing which systems are
 # stored, if it is ever wanted; see PERIODOGRAMS.md.
-POWER_MODE = "subsample"    # "all" | "subsample" | "none"
-POWER_DTYPE = "float32"     # "float32" | "float16"
+POWER_MODE = "subsample"  # "all" | "subsample" | "none"
+POWER_DTYPE = "float32"  # "float32" | "float16"
 
 # The paper's shared down-selection, for POWER_MODE == "subsample": the rule in
 # `pipeline/subsample.py`, keyed on gaia_source_id, which is what makes the same
@@ -230,7 +242,7 @@ SUBSAMPLE_SEED = 20260824
 # the seed, or the size ever changes; `tests/test_periodograms.py` checks it
 # against the shipped `subsample_10000_seed20260824.parquet`.
 SUBSAMPLE_PARENT_SIZE = 5_724_586
-SUBSAMPLE_RANK_CUTOFF = 32256280498693495   # inclusive upper bound on the rank
+SUBSAMPLE_RANK_CUTOFF = 32256280498693495  # inclusive upper bound on the rank
 
 # ==========================================================================
 # Columns carried through from the truth tables
@@ -239,13 +251,29 @@ SUBSAMPLE_RANK_CUTOFF = 32256280498693495   # inclusive upper bound on the rank
 # cares about (the five seed columns, source_id_dr2, population). Per-companion
 # families are appended for k = 1..N_COMPANIONS[population].
 TRUTH_COLUMNS_SYSTEM = (
-    "system_id", "gaia_source_id", "n_transits_dr4",
-    "parallax_mas", "pmra_mas_yr", "pmdec_mas_yr",
-    "mass_st_msun", "radius_st_rsun", "sigma_single_mas", "n_planets",
+    "system_id",
+    "gaia_source_id",
+    "n_transits_dr4",
+    "parallax_mas",
+    "pmra_mas_yr",
+    "pmdec_mas_yr",
+    "mass_st_msun",
+    "radius_st_rsun",
+    "sigma_single_mas",
+    "n_planets",
 )
 TRUTH_COLUMNS_COMPANION = (
-    "sma_{k}", "ecc_{k}", "mass_pl_{k}", "inc_{k}", "Omega_{k}", "omega_{k}",
-    "M_anom_{k}", "period_{k}", "alpha_mas_{k}", "snr_single_{k}",
-    "snr_eff_{k}", "snr_total_{k}",
+    "sma_{k}",
+    "ecc_{k}",
+    "mass_pl_{k}",
+    "inc_{k}",
+    "Omega_{k}",
+    "omega_{k}",
+    "M_anom_{k}",
+    "period_{k}",
+    "alpha_mas_{k}",
+    "snr_single_{k}",
+    "snr_eff_{k}",
+    "snr_total_{k}",
 )
 TRUTH_COLUMNS_PAIR = ("coplanar", "P_ratio", "near_2_1", "near_3_2", "near_resonance")
