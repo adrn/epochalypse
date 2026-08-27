@@ -14,6 +14,7 @@ dependencies = [
     "jaxoplanet",  # the Keplerian reflex model
     "matplotlib",
     "healpy",      # the sky-map figure only
+    "kepmodel",    # J.-B. Delisle's astrometric periodogram -- the period search
 ]
 
 [project.optional-dependencies]
@@ -22,10 +23,6 @@ dependencies = [
 # nodes. See the cluster install in the README. Without mpi4py, run_mpi.py runs
 # as a single rank, which is what makes it usable on a laptop.
 mpi = ["mpi4py"]
-
-# epochalypse.fitting and scripts/run_periodograms.py, which still target the
-# serial catalog's layout and do not run against this catalog yet.
-analysis = ["scipy", "h5py"]
 
 [build-system]
 requires = ["hatchling"]
@@ -38,10 +35,10 @@ packages = ["src/epochalypse"]
 # old notebooks. Nothing needs them to build, and the real inputs are 12 GB of
 # gitignored Arrow that must never end up in an archive.
 [tool.hatch.build.targets.sdist]
-only-include = ["src/epochalypse", "scripts", "tests",
-                "README.md", "PIPELINE.md"]
+only-include = ["src/epochalypse", "scripts", "tests", "mpi",
+                "README.md", "PIPELINE.md", "PERIODOGRAMS.md"]
 
-# No [project.scripts]: the four entry points live in scripts/, outside the
+# No [project.scripts]: the entry points live in scripts/, outside the
 # package, and console scripts would mean moving them back inside it. For an
 # MPI launch `mpirun python scripts/run_mpi.py` also says more about what is
 # running than a generated shim would.

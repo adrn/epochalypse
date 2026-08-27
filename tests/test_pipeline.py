@@ -177,6 +177,34 @@ def test_config_exposes_every_constant_the_package_reads():
     assert not missing, f"config.py does not define: {missing}"
 
 
+def test_high_snr_is_a_floor_on_every_companion():
+    """The high-SNR sample is a physical floor, not a quantile.
+
+    It was `nlargest(1% by max SNR_tot)` once. A system now qualifies only if
+    EVERY injected companion clears `HIGH_SNR_MIN`, so a two-companion system
+    with one strong and one weak companion is out -- which a max-based or
+    quantile rule would have kept.
+    """
+    from epochalypse.sources import select_high_snr
+
+    frame = pd.DataFrame({
+        "gaia_source_id": ["1", "2", "3", "4", "5"],
+        "snr_total_1": [9.0, 9.0, 1.0, 9.0, 9.0],
+        "snr_total_2": [9.0, 1.0, 1.0, np.nan, C.HIGH_SNR_MIN],
+    })
+    kept = set(select_high_snr(frame)["gaia_source_id"])
+    assert kept == {"1", "5"}, kept          # 5 sits exactly on the floor: >= not >
+    # not a fixed fraction of the input
+    assert len(select_high_snr(frame)) == 2
+
+    # one-companion populations have no snr_total_2 column at all
+    one = frame[["gaia_source_id", "snr_total_1"]]
+    assert set(select_high_snr(one)["gaia_source_id"]) == {"1", "2", "4", "5"}
+
+    # an explicit floor overrides the configured one
+    assert len(select_high_snr(frame, snr_min=0.5)) == 4   # all but row 4, whose NaN never clears
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

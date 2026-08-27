@@ -27,18 +27,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from epochalypse_periodograms import calibrate as cal
-from epochalypse_periodograms import config as C
+from epochalypse.periodogram import calibrate as cal
+from epochalypse.periodogram import config as C
 
 STAGES = ("calibrate", "census", "merge", "subsample-cutoff")
 
 # Columns worth keeping in a merged file: everything the three paper figures
 # read, and nothing that only exists to trace a row back to its epochs.
-FIGURE_COLUMNS = None   # None -> every column
 
 
 def stage_calibrate(args):
-    calibration = cal.calibrate(target_fp=args.target_fp)
+    calibration = cal.calibrate(target_fp=None)
     path = cal.write_calibration(calibration)
     print(f"thresholds from {calibration['n_null_systems']:,} companion-free systems "
           f"@ FP={calibration['target_fp']:.1%}")
@@ -69,14 +68,14 @@ def stage_merge(args):
         for high_snr in (False, True):
             if high_snr and C.N_COMPANIONS[population] == 0:
                 continue
-            path, n = cal.merge(population, high_snr=high_snr, columns=FIGURE_COLUMNS)
+            path, n = cal.merge(population, high_snr=high_snr, columns=None)
             size = path.stat().st_size / 1e9
             print(f"  {path.name:<52} {n:>10,} rows  {size:6.2f} GB", flush=True)
 
 
 def stage_subsample_cutoff(args):
     """Re-derive the rank quantile `writers.in_paper_subsample` compares against."""
-    from epochalypse_periodograms.writers import source_id_ranks
+    from epochalypse.periodogram.writers import source_id_ranks
 
     merged = C.catalog_data_dir() / "injected_solutions_0_companion.parquet"
     ids = pd.read_parquet(merged, columns=["gaia_source_id"])["gaia_source_id"].to_numpy()

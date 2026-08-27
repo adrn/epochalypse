@@ -8,12 +8,11 @@ divided and what comes out the other end.
 
 See PERIODOGRAMS.md for the run itself. The import surface:
 
-    from epochalypse_periodograms import config as C
-    from epochalypse_periodograms.grid import frequency_segments, segment_periods
-    from epochalypse_periodograms.periodogram import characterize_system
-    from epochalypse_periodograms.shards import ShardReader, work_units
-    from epochalypse_periodograms.writers import PowerStore
-    from epochalypse_periodograms.calibrate import load_characterization
+    from epochalypse.periodogram import config as C
+    from epochalypse.periodogram.grid import frequency_segments, segment_periods
+    from epochalypse.periodogram.periodogram import characterize_system
+    from epochalypse.periodogram.shards import ShardReader, work_units
+    from epochalypse.periodogram.calibrate import load_characterization
 """
 
 __version__ = "0.1.0"

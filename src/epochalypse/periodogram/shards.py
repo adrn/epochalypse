@@ -66,7 +66,7 @@ def discover_shards(population):
     return numbers, n_shards
 
 
-def work_units(populations=None, n_parts=1, catalog=True):
+def work_units(populations=None, n_parts=1):
     """Every `(population, shard, n_shards, part, n_parts)` the run must do.
 
     Ordered population-major, then by shard, so a rank's contiguous slice of

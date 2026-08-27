@@ -17,8 +17,10 @@ source reproduces it exactly. Index-based seeding cannot survive being split.
 **No detectability rejection.** All three populations are drawn from the
 unbiased prior. `SNR_tot` is recorded per companion but never used to accept or
 reject; the high-SNR sample is selected afterwards as the top
-`HIGH_SNR_FRACTION` by recorded `SNR_tot`. At 4M stars, rejection sampling to a
-fixed threshold is expensive and bakes the threshold into the data.
+`HIGH_SNR_MIN` on every injected companion. At 4M stars, rejection sampling to a
+fixed threshold is expensive and bakes the threshold into the data; applying the
+floor afterwards leaves it an analysis choice, and characterization applies the
+same rule to the same rows.
 
 ## Setup
 
@@ -40,7 +42,7 @@ uv sync
 MPICC=$(which mpicc) uv pip install --no-binary=mpi4py mpi4py
 ```
 
-Without `mpi4py`, `run_mpi.py` runs as a single rank, which is what makes it
+Without `mpi4py`, `simulate_mpi.py` runs as a single rank, which is what makes it
 usable on a laptop. `uv sync --extra analysis` adds scipy and h5py for
 `epochalypse.fitting`, which does not run against this catalog yet.
 
@@ -71,18 +73,18 @@ raises naming the offending ids rather than returning the wrong epochs.
 python scripts/generate_catalog.py --stages stars index
 
 # 2. simulate -- the expensive part, and the only one that needs a cluster
-mpirun python scripts/run_mpi.py
+mpirun python scripts/simulate_mpi.py
 
 # 3. merge the shards, select the high-SNR views, draw the figures
 python scripts/generate_catalog.py --stages merge select figures
 ```
 
-Locally, `run_mpi.py` falls back to a single rank when mpi4py is absent, which
+Locally, `simulate_mpi.py` falls back to a single rank when mpi4py is absent, which
 is how you test it:
 
 ```bash
-python scripts/run_mpi.py --limit 200         # one process, no MPI
-mpirun -n 8 python scripts/run_mpi.py         # 8 local processes
+python scripts/simulate_mpi.py --limit 200         # one process, no MPI
+mpirun -n 8 python scripts/simulate_mpi.py         # 8 local processes
 python scripts/simulate_source.py 5484066448309985152   # one star, printed
 ```
 
@@ -96,7 +98,7 @@ died.
 
 ## On a Slurm cluster
 
-`run_mpi.py` is SPMD, not a worker pool: every rank runs the same code, asks
+`simulate_mpi.py` is SPMD, not a worker pool: every rank runs the same code, asks
 `COMM_WORLD` which rank it is, takes its own contiguous slice of the source
 list, and writes its own files. Ranks talk once, in a `gather` at the end, to
 print a summary. So there is **no** `-m mpi4py.futures` and no `--mpi` flag —
@@ -148,7 +150,7 @@ export OMP_NUM_THREADS=1
 export JAX_PLATFORMS=cpu          # skip the GPU probe on CPU nodes
 
 date
-mpirun python scripts/run_mpi.py --skip-existing
+mpirun python scripts/simulate_mpi.py --skip-existing
 date
 ```
 
@@ -199,10 +201,10 @@ would mostly remove it.
 | `0_companion` | simulated | noise-only control |
 | `1_companion` | simulated | one companion, unbiased prior |
 | `2_companion` | simulated | two companions, unbiased prior |
-| `*_high_snr` | selected | top 1% of the above by `SNR_tot` |
+| `*_high_snr` | selected | every companion clears `SNR_tot >= 5` |
 
-The high-SNR views are a quantile over a column, so re-selecting at a different
-fraction costs seconds and needs no regeneration.
+The high-SNR views are a threshold on a recorded column, so re-selecting at a
+different floor costs seconds and needs no regeneration.
 
 ## Layout
 
@@ -216,16 +218,20 @@ epochalypse/
 │   ├── planets.py              per-source companion draw (Roche + Hill screens)
 │   ├── astrometry.py           per-source epoch simulation + ShardWriter
 │   ├── figures.py              the catalog figures
-│   └── fitting.py              periodogram characterization -- not ported
+│   ├── mpi.py                  the MPI plumbing both parallel stages share
+│   ├── shardio.py              the buffered parquet writer they share
+│   └── periodogram/            the characterization half (see PERIODOGRAMS.md)
 ├── scripts/                    the entry points
 │   ├── generate_catalog.py     stages: stars, index, merge, select, figures
-│   ├── run_mpi.py              the simulation; MPI ranks, the cluster entry point
+│   ├── simulate_mpi.py         the simulation; MPI ranks, the cluster entry point
 │   ├── simulate_source.py      print one star, for inspection
-│   └── run_periodograms.py     characterization -- not ported
+│   ├── characterize_mpi.py     the periodogram search; MPI ranks
+│   ├── characterize_finish.py  stages: calibrate, census, merge
+│   └── periodogram_source.py   print one system's periodogram, for inspection
 ├── pyproject.toml              dependencies; uv.lock pins them
 ├── data/                       static inputs (see Setup)
 ├── outputs/                    generated: data/ (shards, indices, truth tables), figures/
-└── tests/test_pipeline.py      self-check for the seeding, priors, and screens
+└── tests/                      test_pipeline.py, test_periodograms.py
 ```
 
 ## Why the lookup layer exists
@@ -268,6 +274,6 @@ p = 0.2 on mass; KS p = 0.08–0.9 against the serial pipeline across sma, mass,
 eccentricity, inclination, period, alpha, SNR). Any previously generated
 1- or 2-companion catalog must be regenerated rather than mixed with new output.
 
-Not yet done: the analysis side (`scripts/run_periodograms.py`) still assumes the
-serial catalog's file layout and population names, so the characterization step
-needs porting to the parquet shards before it can run against this catalog.
+The characterization half now runs against the parquet shards -- see
+`PERIODOGRAMS.md`. The old serial analysis module was deleted with it; two of
+its capabilities have no successor in the kepmodel path and are noted there.

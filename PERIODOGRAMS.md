@@ -34,63 +34,32 @@ identity that rests on — that `kepmodel` visits exactly `segment_periods(segme
 
 ## Setup
 
-```bash
-uv sync
-python tests/test_periodograms.py                             # synthetic, no catalog needed
-python tests/test_periodograms.py --catalog-root <catalog>    # + one unit against real shards
-```
-
-`mpi4py` is deliberately not a default dependency: it has to be built against
-the MPI that `mpirun`/`srun` actually use, and a wheel built against a different
-one fails across nodes. On a cluster:
+One environment for the whole repo -- see `PIPELINE.md` for `uv sync` and the
+cluster `mpi4py` build. `kepmodel` (the period search) and its `spleaf` noise
+terms come in with it.
 
 ```bash
-module load <site openmpi/mpich>
-uv sync
-MPICC=$(which mpicc) uv pip install --no-binary=mpi4py mpi4py
+uv run python tests/test_periodograms.py                          # synthetic, no catalog
+uv run python tests/test_periodograms.py --catalog-root <catalog>  # + one real work unit
 ```
-
-Without `mpi4py`, `run_mpi.py` runs as a single rank, which is what makes it
-usable on a laptop.
-
-### Inputs
-
-One directory, the generated catalog. It defaults to `<repo>/outputs` — where
-`scripts/generate_catalog.py` leaves the shards — so a checkout that has already
-generated a catalog needs no `--catalog-root` at all. Point it elsewhere for a
-catalog delivered as a directory:
-
-```bash
-python scripts/run_mpi.py --catalog-root ../flatiron_server_run_500pc/epochalypse
-```
-
-| path | what |
-| --- | --- |
-| `data/simulated_astrometry/<population>/epochs_rank*.parquet` | the epochs, 320 shards × 3 populations, ~95 GB |
-| `data/simulated_astrometry/<population>/truths_rank*.parquet` | the injected parameters, same sharding |
-| `data/injected_solutions_<population>.parquet` | merged truths — only `finish.py --stages subsample-cutoff` reads it |
-
-The merged truth tables are **not** on the hot path. A rank reads its shard's
-truth file, which is already in the same order as its epoch file, and joins on
-row position — there is no id lookup anywhere in the inner loop.
 
 ## Running it
 
 ```bash
 # 1. the search -- the expensive part, and the only one that needs a cluster
-mpirun python scripts/run_mpi.py --skip-existing
+mpirun python scripts/characterize_mpi.py --skip-existing
 
 # 2. thresholds, class counts, and (optionally) merged tables
-python scripts/finish.py --stages calibrate census merge
+python scripts/characterize_finish.py --stages calibrate census merge
 ```
 
 Locally:
 
 ```bash
-python scripts/characterize_shard.py 1_companion 7                    # one shard, ~1.8 h
-python scripts/characterize_shard.py 1_companion 7 --limit 300        # ~2 min
-python scripts/run_mpi.py --max-units 2 --limit 20                    # one process, no MPI
-mpirun -n 8 python scripts/run_mpi.py --max-units 8 --limit 20        # 8 local processes
+python epochalypse.periodogram.unit.run_unit 1_companion 7                    # one shard, ~1.8 h
+python epochalypse.periodogram.unit.run_unit 1_companion 7 --limit 300        # ~2 min
+python scripts/characterize_mpi.py --max-units 2 --limit 20                    # one process, no MPI
+mpirun -n 8 python scripts/characterize_mpi.py --max-units 8 --limit 20        # 8 local processes
 python scripts/periodogram_source.py 1_companion 5484066448309985152 --plot one.pdf
 ```
 
@@ -98,7 +67,7 @@ python scripts/periodogram_source.py 1_companion 5484066448309985152 --plot one.
 caps systems per unit but still walks all 960 units, so `--limit 20` alone is
 still a few hours on one process. `--max-units 2 --limit 20` is fifteen seconds.
 
-Both drivers take `--catalog-root` and `--output-root`; `run_mpi.py` also takes
+Both drivers take `--catalog-root` and `--output-root`; `characterize_mpi.py` also takes
 `--populations` and `--power`.
 
 Each unit writes `.parquet.tmp` and renames on success, so a rank killed
@@ -108,7 +77,7 @@ units that died, and it costs nothing to leave on.
 
 ## On a Slurm cluster
 
-`run_mpi.py` is SPMD, not a worker pool: every rank runs the same code, asks
+`characterize_mpi.py` is SPMD, not a worker pool: every rank runs the same code, asks
 `COMM_WORLD` which rank it is, takes its own contiguous slice of the work-unit
 list, and writes its own files. Ranks talk once, at a `Barrier` after rank 0
 writes the manifest, and once more in a `gather` at the end to print a summary.
@@ -127,7 +96,7 @@ Both `cd` to `/mnt/home/apricewhelan/work/epochalypse/periodograms` and
 `source .venv/bin/activate`, following the generator's `mpi/*.sh` — the same
 path, plus this subdirectory. Neither passes `--catalog-root` or
 `--output-root`, because the defaults (`<repo>/outputs` for the shards,
-`<repo>/periodograms/outputs` for the results) are the generator's own layout.
+`<repo>/outputs/periodograms` for the results) are the generator's own layout.
 Run `uv sync` once before submitting; the scripts activate `.venv` and call
 `python` rather than using `uv run`, since under `mpirun` every rank would
 otherwise re-check the environment at once.
@@ -350,7 +319,7 @@ different scale entirely and must not be compared numerically with these.
 Everything the population maps need is in the characterization table:
 
 ```python
-from epochalypse_periodograms.calibrate import load_characterization
+from epochalypse.periodogram.calibrate import load_characterization
 
 # "one companion: random" -- the whole 5.7 M, flags already applied
 df = load_characterization("1_companion",
@@ -371,14 +340,19 @@ on `gaia_source_id`) is probably still what gets *drawn*, with the full table
 behind every number in the caption.
 
 For the example-periodogram figure, `epochalypse_figures.examples` takes a
-`periodogram(t, psi, pf, y, yerr) -> (periods, power)` callable. Either
-recompute (nine curves, three seconds) or read the stored ones back:
+`periodogram(t, psi, pf, y, yerr) -> (periods, power)` callable. Recompute them -- nine curves, three seconds:
 
 ```python
-from epochalypse_periodograms.writers import PowerStore
-store = PowerStore("1_companion")
-periods, power = store.periods, store.power(gaia_source_id)
+from epochalypse.periodogram.grid import frequency_segments
+from epochalypse.periodogram.periodogram import kepmodel_power
+
+periods, power, _ = kepmodel_power(t, psi, pf, y, yerr,
+                                   segments=frequency_segments())
 ```
+
+(A random-access reader over the stored `power` shards was written but never
+called, so it went with the merge. `power_shard()` parquet plus the shared
+`period_grid.parquet` is what a reader would open.)
 
 ## Status
 
@@ -387,6 +361,24 @@ Verified against the delivered 500 pc catalog: `tests/test_periodograms.py
 invariants, including that a 4-way split partitions a shard exactly, that
 `(shard, shard_row)` addresses the right star, and that a stored curve's peak
 and argmax reproduce the `top_power` and `best_period` written beside it.
+
+**Two capabilities were lost when the old serial analysis module was deleted**,
+and neither has a successor in the kepmodel path:
+
+* **No conditional second-period search.** `double_periodogram` used to run a
+  two-pass CLEAN: find P1, then re-scan P2 with an orbit fixed at P1 in the
+  design, masking P2 within `exclude_dex` of P1 as degenerate, giving a second
+  power spectrum that could be calibrated for a second-planet false-positive
+  rate. `characterize_system` instead reports the two tallest peaks of a
+  *single* 1-planet periodogram as `peak1` / `peak2`. For two-companion systems
+  the second-tallest peak is frequently an alias or harmonic of P1 rather than
+  the second companion, so `period_2_recovered` should be read with that in
+  mind. kepmodel supports multi-Keplerian fits, so rebuilding this is wiring
+  rather than new maths.
+* **No eccentricity from the periodogram.** `refine_orbit` used to emit
+  `best_period_ecc` and `e_ecc`; there is no eccentric refinement now.
+
+Both are recoverable from git (`src/epochalypse/fitting.py`, deleted).
 
 Not done here: the figures themselves. `epochalypse_figures` still expects the
 `_agnostic` / `_detectable` population keys and a `row_index` column, so

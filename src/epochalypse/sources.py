@@ -198,22 +198,23 @@ class ScanLawStore:
 # --------------------------------------------------------------------------
 # The high-SNR view over a generated population
 # --------------------------------------------------------------------------
-def select_high_snr(frame, fraction=None):
-    """The top `fraction` of systems by detectability.
+def select_high_snr(frame, snr_min=None):
+    """Systems in which *every* injected companion clears SNR_tot >= `snr_min`.
 
-    A system's detectability is the largest SNR_tot over its companions, matching
-    how the old generated high-SNR populations required *every* companion to be
-    detectable only in the sense of being drawn from the same threshold -- here
-    the ranking is per system and the threshold is a quantile, so the size of the
-    selection is fixed and the cut value is whatever the data says it is.
+    This is the whole of the "high-SNR population" -- there is no separate run.
+    All three populations are drawn from the unbiased prior with SNR_tot
+    recorded rather than rejected on, so the floor is an analysis choice applied
+    after the fact. A companion whose SNR_tot is not finite never clears it.
+
+    One caveat a post-hoc cut carries and rejection sampling did not: stars
+    enter weighted by their acceptance probability, so the high-SNR populations
+    come from a slightly nearer subset of the parent sample.
     """
-    fraction = C.HIGH_SNR_FRACTION if fraction is None else fraction
+    snr_min = C.HIGH_SNR_MIN if snr_min is None else float(snr_min)
     columns = [c for c in ("snr_total_1", "snr_total_2") if c in frame.columns]
     if not columns:
-        raise KeyError("no snr_total_* columns to rank on")
-    with np.errstate(invalid="ignore"):
-        score = np.nanmax(frame[columns].to_numpy(float), axis=1)
-    frame = frame.assign(_snr_rank=score)
-    n_keep = max(1, int(round(fraction * len(frame))))
-    selected = frame.nlargest(n_keep, "_snr_rank").drop(columns="_snr_rank")
+        raise KeyError("no snr_total_* columns to cut on")
+    snr = frame[columns].to_numpy(float)
+    keep = np.isfinite(snr).all(axis=1) & (snr >= snr_min).all(axis=1)
+    selected = frame[keep]
     return selected.sort_values("gaia_source_id").reset_index(drop=True)

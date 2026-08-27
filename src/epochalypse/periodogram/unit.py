@@ -1,28 +1,20 @@
-#!/usr/bin/env python
-"""Characterize one (population, shard) work unit -- the whole of the compute.
+"""One work unit: search every system in one shard (or one part of one).
 
-`run_mpi.py` is a loop over `run_unit` below and a `gather` at the end; there is
-no other work in this pipeline. Running this script directly is how a single
-shard is tested, timed, or redone after a failure:
-
-    python scripts/characterize_shard.py 1_companion 7          # one shard
-    python scripts/characterize_shard.py 1_companion 7 --limit 200
-    python scripts/characterize_shard.py 1_companion 7 --part 0 --n-parts 4
+This is the whole of the compute. `scripts/characterize_mpi.py` is a loop over
+`run_unit` and a `gather` at the end; there is no other work in this pipeline.
+It lives in the package rather than in a script because the MPI driver and the
+tests both call it -- importing it from a script is what used to require a
+`sys.path` hack in the test suite.
 """
 from __future__ import annotations
 
-import argparse
 import time
-from pathlib import Path
 
-import numpy as np
-
-from epochalypse_periodograms import config as C
-from epochalypse_periodograms.grid import frequency_segments, segment_periods
-from epochalypse_periodograms.periodogram import characterize_system
-from epochalypse_periodograms.shards import ShardReader
-from epochalypse_periodograms.writers import (CharacterizationWriter, PowerWriter,
-                                              write_period_grid)
+from . import config as C
+from .grid import frequency_segments, segment_periods
+from .periodogram import characterize_system
+from .shards import ShardReader
+from .writers import CharacterizationWriter, PowerWriter
 
 
 def run_unit(population, shard, n_shards, part=0, n_parts=1, *, segments=None,
@@ -95,47 +87,3 @@ def run_unit(population, shard, n_shards, part=0, n_parts=1, *, segments=None,
               f"{elapsed / 60:6.1f} min ({rate:5.1f}/s), {power.n_systems:,} curves stored"
               + (f", {len(failures)} FAILED" if failures else ""), flush=True)
     return summary
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("population", choices=list(C.POPULATIONS))
-    parser.add_argument("shard", type=int)
-    parser.add_argument("--n-shards", type=int, default=None,
-                        help="defaults to the count in the shard file names")
-    parser.add_argument("--part", type=int, default=0)
-    parser.add_argument("--n-parts", type=int, default=1)
-    parser.add_argument("--catalog-root", type=Path)
-    parser.add_argument("--output-root", type=Path)
-    parser.add_argument("--power", choices=("all", "subsample", "none"), default=None,
-                        help=f"which systems keep a raw curve (default {C.POWER_MODE})")
-    parser.add_argument("--limit", type=int, help="cap systems (smoke tests only)")
-    parser.add_argument("--skip-existing", action="store_true")
-    args = parser.parse_args(argv)
-
-    if args.catalog_root:
-        C.set_catalog_root(args.catalog_root)
-    if args.output_root:
-        C.set_output_root(args.output_root)
-
-    n_shards = args.n_shards
-    if n_shards is None:
-        from epochalypse_periodograms.shards import discover_shards
-
-        _, n_shards = discover_shards(args.population)
-
-    segments = frequency_segments()
-    periods = segment_periods(segments)
-    write_period_grid(periods)
-    print(f"grid: {len(periods):,} trial periods, {periods[0]:.2e} - {periods[-1]:.0f} yr, "
-          f"{len(segments)} segments", flush=True)
-
-    run_unit(args.population, args.shard, n_shards, args.part, args.n_parts,
-             segments=segments, limit=args.limit, skip_existing=args.skip_existing,
-             power_mode=args.power)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

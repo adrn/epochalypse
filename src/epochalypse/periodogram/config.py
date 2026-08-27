@@ -5,28 +5,32 @@ Read them as `config.P_MIN`; there is nothing to construct and nothing to pass
 down. The catalog and output paths are functions because `--catalog-root` and
 `--output-root` can move them; everything else is a value.
 
-Physical constants come from `epochalypse_periodograms.constants` (astropy),
-never typed in here.
+Physical constants and the catalog paths come from the parent package -- this
+module holds only what characterization decides for itself.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from .. import config as _cat
+from .. import constants as _k
+
 # Re-exported so every stage reads one authority as `config.X`. Assignments
 # rather than a bare import, because an unused-import pass would otherwise
 # strip the ones only other modules use -- which is how the simulator lost
 # DAYS_PER_YEAR once already.
-from . import constants as _k
-
 DAYS_PER_YEAR = _k.DAYS_PER_YEAR
 DR4_BASELINE_YEARS = _k.DR4_BASELINE_YEARS
 GAIA_EPOCH_TCB_JD = _k.GAIA_EPOCH_TCB_JD
 MJUP_IN_MSUN = _k.MJUP_IN_MSUN
 RSUN_IN_AU = _k.RSUN_IN_AU
 
-# The package root: src/epochalypse_periodograms/config.py -> ../../ .
-ROOT = Path(__file__).resolve().parents[2]
+# The three generated populations, and the SNR floor that defines the high-SNR
+# subset -- both owned by the generator, so there is one definition per repo.
+POPULATIONS = _cat.POPULATIONS
+HIGH_SNR_MIN = _cat.HIGH_SNR_MIN
+PARQUET_COMPRESSION = _cat.PARQUET_COMPRESSION
 
 # ==========================================================================
 # Inputs -- the generated catalog, not produced here
@@ -34,12 +38,11 @@ ROOT = Path(__file__).resolve().parents[2]
 # The directory holding `data/simulated_astrometry/<population>/` and the
 # merged `data/injected_solutions_<population>.parquet`.
 #
-# The default is `<repo>/outputs`, which is where the generator's
-# `config.OUTPUT_ROOT` puts them -- so with this package sitting at
-# `<repo>/periodograms/`, a checkout that has already generated a catalog needs
-# no `--catalog-root` at all. Point it elsewhere for a catalog delivered as a
-# directory, e.g. `--catalog-root ../flatiron_server_run_500pc/epochalypse`.
-CATALOG_ROOT = ROOT.parent / "outputs"
+# Defaults to the generator's own output root, so a checkout that has already
+# generated a catalog needs no `--catalog-root` at all. Point it elsewhere for a
+# catalog delivered as a directory, e.g.
+# `--catalog-root ../flatiron_server_run_500pc/epochalypse`.
+CATALOG_ROOT = _cat.OUTPUT_ROOT
 
 
 def set_catalog_root(path) -> None:
@@ -48,6 +51,8 @@ def set_catalog_root(path) -> None:
     CATALOG_ROOT = Path(path).resolve()
 
 
+# The catalog is whatever the generator wrote. Same layout, same helpers --
+# `--catalog-root` points them at a catalog delivered as a directory instead.
 def catalog_data_dir():
     return CATALOG_ROOT / "data"
 
@@ -57,17 +62,21 @@ def shard_dir(population):
 
 
 def shard_epochs(population, shard, n_shards):
-    return shard_dir(population) / f"epochs_rank{shard:05d}_of_{n_shards:05d}.parquet"
+    return _cat.shard_epochs(population, shard, n_shards) if CATALOG_ROOT == _cat.OUTPUT_ROOT \
+        else shard_dir(population) / f"epochs_rank{shard:05d}_of_{n_shards:05d}.parquet"
 
 
 def shard_truths(population, shard, n_shards):
-    return shard_dir(population) / f"truths_rank{shard:05d}_of_{n_shards:05d}.parquet"
+    return _cat.shard_truths(population, shard, n_shards) if CATALOG_ROOT == _cat.OUTPUT_ROOT \
+        else shard_dir(population) / f"truths_rank{shard:05d}_of_{n_shards:05d}.parquet"
 
 
 # ==========================================================================
 # Outputs
 # ==========================================================================
-OUTPUT_ROOT = ROOT / "outputs"
+# Under the generator's outputs/, so one tree and one .gitignore rule cover
+# both halves of the pipeline.
+OUTPUT_ROOT = _cat.OUTPUT_ROOT / "periodograms"
 
 
 def set_output_root(path) -> None:
@@ -85,7 +94,7 @@ def chars_dir(population):
 
 
 def power_dir(population):
-    return OUTPUT_ROOT / "periodograms" / population
+    return OUTPUT_ROOT / "power" / population
 
 
 def _piece(shard, n_shards, part, n_parts):
@@ -109,7 +118,7 @@ def period_grid_path():
     it is global to a run and storing it per system would multiply the
     periodogram output by two. Every `power` array is aligned to this file.
     """
-    return OUTPUT_ROOT / "periodograms" / "period_grid.parquet"
+    return OUTPUT_ROOT / "period_grid.parquet"
 
 
 def manifest_path():
@@ -127,18 +136,15 @@ def failed_dir():
 # ==========================================================================
 # Populations
 # ==========================================================================
-# The three *generated* populations, and the only three that are searched. The
+# The three generated populations are the only three that are searched. The
 # high-SNR samples are not separate runs: `1_companion_high_snr` is the subset
-# of `1_companion`'s rows with SNR_tot >= HIGH_SNR_MIN on every companion, and
-# every one of those rows was already characterized here. Selecting after the
-# fact is what makes 5.7 M x 3 the whole job rather than 5.7 M x 5.
-POPULATIONS = ("0_companion", "1_companion", "2_companion")
-
-# Injected companions per population, so the truth join knows how many
-# `*_k` column families to look for.
-N_COMPANIONS = {"0_companion": 0, "1_companion": 1, "2_companion": 2}
-
-HIGH_SNR_MIN = 5.0  # SNR_tot floor, applied to EVERY injected companion
+# of `1_companion`'s rows clearing HIGH_SNR_MIN on every companion, and every
+# one of those rows was already characterized here. Selecting after the fact is
+# what makes 5.7 M x 3 the whole job rather than 5.7 M x 5.
+#
+# POPULATIONS and HIGH_SNR_MIN are re-exported from the generator above: it is
+# a dict name -> n_companions, so it doubles as the truth-join arity that used
+# to be a second copy called N_COMPANIONS.
 
 # ==========================================================================
 # Search grid

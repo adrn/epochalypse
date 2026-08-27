@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from . import config as C
+from .shardio import BufferedParquetWriter
 from .planets import (companion_columns, draw_companions, star_noise_terms,
                       system_seed)
 
@@ -174,14 +175,28 @@ def simulate_source(population, gaia_source_id, *, catalog, scanlaw):
 # --------------------------------------------------------------------------
 # Shard writer
 # --------------------------------------------------------------------------
-class ShardWriter:
-    """Buffers systems and writes one parquet pair per (population, rank).
+class _EpochWriter(BufferedParquetWriter):
+    """The epochs half: one buffered DataFrame per system, concatenated per flush."""
 
-    Flushing on a row count keeps a rank's memory bounded regardless of how
-    many sources land in its slice. Both files are written to `.tmp` and
-    renamed on success, so a rank killed mid-write leaves no file at all rather
-    than a truncated one that looks complete -- which is what makes
-    `--skip-existing` trustworthy.
+    def _table(self, rows):
+        import pyarrow as pa
+
+        return pa.Table.from_pandas(pd.concat(rows, ignore_index=True),
+                                    preserve_index=False)
+
+
+class ShardWriter:
+    """Writes one parquet pair per (population, rank).
+
+    The epochs stream through `shardio.BufferedParquetWriter` -- flushing a row
+    group every `FLUSH_EVERY` systems keeps a rank's memory bounded regardless
+    of how many sources land in its slice, and both files land via `.tmp` +
+    rename so a rank killed mid-write leaves no file at all rather than a
+    truncated one that looks complete. That is what makes `--skip-existing`
+    trustworthy.
+
+    The truths are one row per system, so they are written whole at close
+    rather than streamed.
     """
 
     def __init__(self, population, rank, n_ranks):
@@ -189,41 +204,20 @@ class ShardWriter:
         self.rank = rank
         self.epochs_path = C.shard_epochs(population, rank, n_ranks)
         self.truths_path = C.shard_truths(population, rank, n_ranks)
-        self.epochs_path.parent.mkdir(parents=True, exist_ok=True)
-        self._epochs_tmp = self.epochs_path.with_suffix(".parquet.tmp")
+        self._epochs = _EpochWriter(self.epochs_path, C.FLUSH_EVERY,
+                                    C.PARQUET_COMPRESSION)
         self._truths_tmp = self.truths_path.with_suffix(".parquet.tmp")
-        self._epochs, self._truths = [], []
-        self._epoch_writer = None
+        self._truths = []
         self.n_systems = self.n_epochs = 0
 
     def add(self, epochs, truth):
-        self._epochs.append(epochs)
+        self._epochs.add(epochs)
         self._truths.append(truth)
         self.n_systems += 1
         self.n_epochs += len(epochs)
-        if len(self._truths) >= C.FLUSH_EVERY:
-            self.flush()
-
-    def flush(self):
-        """Append the buffered epochs to the shard file."""
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        if not self._epochs:
-            return
-        table = pa.Table.from_pandas(pd.concat(self._epochs, ignore_index=True),
-                                     preserve_index=False)
-        if self._epoch_writer is None:
-            self._epoch_writer = pq.ParquetWriter(
-                self._epochs_tmp, table.schema, compression=C.PARQUET_COMPRESSION)
-        self._epoch_writer.write_table(table)
-        self._epochs = []
 
     def close(self):
-        self.flush()
-        if self._epoch_writer is not None:
-            self._epoch_writer.close()
-            self._epochs_tmp.replace(self.epochs_path)
+        self._epochs.close()
         pd.DataFrame(self._truths).to_parquet(
             self._truths_tmp, index=False, compression=C.PARQUET_COMPRESSION)
         self._truths_tmp.replace(self.truths_path)

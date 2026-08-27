@@ -22,7 +22,6 @@ import numpy as np
 
 from . import config as C
 
-TWOPI = 2.0 * np.pi
 
 
 def epoch_arrays(obs_time_tcb, scan_pos_angle, parallax_factor_al,

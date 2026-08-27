@@ -41,39 +41,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import time
 from pathlib import Path
 
-from characterize_shard import run_unit
+from epochalypse.periodogram.unit import run_unit
 
-from epochalypse_periodograms import __version__
-from epochalypse_periodograms import config as C
-from epochalypse_periodograms import grid as G
-from epochalypse_periodograms.shards import work_units
-from epochalypse_periodograms.writers import write_period_grid
-
-
-def mpi_context():
-    """(comm, rank, size). Falls back to a single rank when mpi4py is absent."""
-    try:
-        from mpi4py import MPI
-    except ImportError:
-        return None, 0, 1
-    comm = MPI.COMM_WORLD
-    return comm, comm.Get_rank(), comm.Get_size()
+from epochalypse.periodogram import __version__
+from epochalypse import mpi
+from epochalypse.periodogram import config as C
+from epochalypse.periodogram import grid as G
+from epochalypse.periodogram.shards import work_units
+from epochalypse.periodogram.writers import write_period_grid
 
 
-def slice_for_rank(n_units, rank, size):
-    """This rank's contiguous [start, stop) of the work-unit list.
-
-    The remainder is spread over the first few ranks so the largest and smallest
-    slices differ by at most one unit.
-    """
-    base, extra = divmod(n_units, size)
-    start = rank * base + min(rank, extra)
-    return start, start + base + (1 if rank < extra else 0)
 
 
 def write_manifest(segments, args, size):
@@ -143,7 +124,7 @@ def main(argv=None):
                              "only redoes the units that died")
     args = parser.parse_args(argv)
 
-    comm, rank, size = mpi_context()
+    comm, rank, size = mpi.mpi_context()
     if args.catalog_root:
         C.set_catalog_root(args.catalog_root)
     if args.output_root:
@@ -158,22 +139,16 @@ def main(argv=None):
 
     if rank == 0:
         described = G.describe(segments)
-        print(f"ranks       : {size}" + ("" if comm else "  (mpi4py not found -- "
-                                                         "running as a single rank)"))
-        print(f"catalog     : {C.CATALOG_ROOT}")
-        print(f"output      : {C.OUTPUT_ROOT}")
-        print(f"populations : {', '.join(args.populations)}")
-        print(f"work units  : {len(units):,}  ->  ~{max(len(units) // size, 1)} per rank")
-        print(f"grid        : {described['n_periods']:,} trial periods, "
-              f"{described['p_min_yr']:.2e} - {described['p_max_yr']:.0f} yr, "
-              f"{described['n_segments']} segments, "
-              f"dlogP <= {described['dlog_max']:.2e}")
-        print(f"raw curves  : {args.power or C.POWER_MODE}"
-              + (f" (decimate {C.POWER_DECIMATE}, {C.POWER_DTYPE})"
-                 if (args.power or C.POWER_MODE) != "none" else ""))
-        print(f"threads/rank: OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS', 'unset')}"
-              + ("" if os.environ.get("OMP_NUM_THREADS") == "1"
-                 else "   <- set this to 1 to avoid oversubscription"))
+        mpi.banner(
+            comm, size, len(units), item="work units",
+            catalog=C.CATALOG_ROOT,
+            output=C.OUTPUT_ROOT,
+            populations=", ".join(args.populations),
+            grid=(f"{described['n_periods']:,} trial periods, "
+                  f"{described['p_min_yr']:.2e} - {described['p_max_yr']:.0f} yr, "
+                  f"{described['n_segments']} segments, "
+                  f"dlogP <= {described['dlog_max']:.2e}"),
+            curves=args.power or C.POWER_MODE)
         write_manifest(segments, args, size)
         write_period_grid(periods)
         print(f"wrote       : {C.manifest_path().name}, {C.period_grid_path().name}\n",
@@ -182,7 +157,7 @@ def main(argv=None):
     if comm is not None:       # every rank waits for the manifest and the grid file
         comm.Barrier()
 
-    start, stop = slice_for_rank(len(units), rank, size)
+    start, stop = mpi.slice_for_rank(len(units), rank, size)
     started = time.time()
     summaries = []
     for population, shard, n_shards, part, n_parts in units[start:stop]:
@@ -199,7 +174,7 @@ def main(argv=None):
     print(f"[rank {rank:05d}] {mine['n_units']} unit(s), {mine['n_systems']:,} systems "
           f"in {mine['seconds'] / 60:.1f} min", flush=True)
 
-    everyone = comm.gather(mine, root=0) if comm else [mine]
+    everyone = mpi.gather(comm, mine)
     if rank == 0:
         systems = sum(s["n_systems"] for s in everyone)
         failed = sum(s["n_failed"] for s in everyone)

@@ -17,21 +17,17 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-
-from epochalypse_periodograms import calibrate as cal          # noqa: E402
-from epochalypse_periodograms import config as C               # noqa: E402
-from epochalypse_periodograms import fitting, grid             # noqa: E402
-from epochalypse_periodograms import periodogram as pg         # noqa: E402
-from epochalypse_periodograms import writers                   # noqa: E402
+from epochalypse.periodogram import calibrate as cal
+from epochalypse.periodogram import config as C
+from epochalypse.periodogram import fitting, grid
+from epochalypse.periodogram import periodogram as pg
+from epochalypse.periodogram import writers
 
 PASSED = []
 
@@ -174,9 +170,9 @@ def test_calibration():
 # ==========================================================================
 def test_shards(segments, periods, catalog_root, population="1_companion", n_systems=12):
     print(f"\nshards  ({catalog_root})")
-    from characterize_shard import run_unit
+    from epochalypse.periodogram.unit import run_unit
 
-    from epochalypse_periodograms.shards import ShardReader, discover_shards, work_units
+    from epochalypse.periodogram.shards import ShardReader, discover_shards, work_units
 
     C.set_catalog_root(catalog_root)
     numbers, n_shards = discover_shards(population)

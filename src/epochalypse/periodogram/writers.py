@@ -41,6 +41,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ..shardio import BufferedParquetWriter
 from . import config as C
 
 
@@ -92,7 +93,7 @@ def truth_columns(population):
     the population injects.
     """
     columns = list(C.TRUTH_COLUMNS_SYSTEM)
-    n = C.N_COMPANIONS[population]
+    n = C.POPULATIONS[population]
     for k in range(1, n + 1):
         columns += [c.format(k=k) for c in C.TRUTH_COLUMNS_COMPANION]
     if n == 2:
@@ -128,56 +129,35 @@ def to_analysis_schema(frame):
     return frame
 
 
-class CharacterizationWriter:
-    """Buffers characterization records and writes one parquet per work unit."""
+class CharacterizationWriter(BufferedParquetWriter):
+    """Buffers characterization records and writes one parquet per work unit.
+
+    Only `_table` is ours: the buffering, the atomic rename, and the context
+    manager come from `shardio.BufferedParquetWriter`.
+    """
 
     def __init__(self, path, population, shard, truths):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._tmp = self.path.with_suffix(".parquet.tmp")
-        self._writer = None
-        self._records = []
-        self._population = population
+        super().__init__(path, C.CHARS_FLUSH_EVERY, C.PARQUET_COMPRESSION,
+                         compression_level=C.PARQUET_COMPRESSION_LEVEL)
         self._shard = shard
         self._truths = truths[truth_columns(population)]
-        self.n_systems = 0
+
+    @property
+    def n_systems(self):
+        return self.n_rows
 
     def add(self, index, record):
         record = dict(record)
         record["shard"] = self._shard
         record["shard_row"] = index
-        self._records.append(record)
-        self.n_systems += 1
-        if len(self._records) >= C.CHARS_FLUSH_EVERY:
-            self.flush()
+        super().add(record)
 
-    def flush(self):
-        if not self._records:
-            return
-        frame = pd.DataFrame.from_records(self._records)
+    def _table(self, rows):
+        frame = pd.DataFrame.from_records(rows)
         joined = self._truths.iloc[frame["shard_row"].to_numpy()].reset_index(drop=True)
         frame = to_analysis_schema(pd.concat([joined, frame], axis=1))
         frame["gaia_source_id"] = frame["gaia_source_id"].astype("int64")
-        table = pa.Table.from_pandas(frame, preserve_index=False)
-        if self._writer is None:
-            self._writer = pq.ParquetWriter(
-                self._tmp, table.schema, compression=C.PARQUET_COMPRESSION,
-                compression_level=C.PARQUET_COMPRESSION_LEVEL)
-        self._writer.write_table(table)
-        self._records = []
-
-    def close(self):
-        self.flush()
-        if self._writer is not None:
-            self._writer.close()
-            self._tmp.replace(self.path)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
+        return pa.Table.from_pandas(frame, preserve_index=False)
 
 
 # ==========================================================================
@@ -193,6 +173,11 @@ class PowerWriter:
 
     A `PowerWriter` with `mode="none"` is a no-op object, so the caller has no
     branch: it always constructs one and always calls `add`.
+
+    Deliberately NOT built on `shardio.BufferedParquetWriter`: the no-op mode
+    must not create the directory, and the fixed-size-list packing keeps two
+    parallel buffers. Both would need flags on the base that no other writer
+    wants.
     """
 
     def __init__(self, path, n_periods, mode=None, decimate=None, dtype=None):
@@ -274,50 +259,3 @@ def write_period_grid(periods, decimate=None, path=None):
     pq.write_table(table, tmp, compression=C.PARQUET_COMPRESSION)
     tmp.replace(path)
     return path
-
-
-class PowerStore:
-    """Read the stored curves back: `store.power(gaia_source_id)`.
-
-    Opens one population's power files lazily and indexes them by source id
-    from parquet statistics, so pulling the nine curves an example figure needs
-    out of 300 GB touches three row groups. For a bulk re-analysis, iterate the
-    dataset with pyarrow directly instead -- this class is built for lookups.
-    """
-
-    def __init__(self, population, output_root=None):
-        if output_root is not None:
-            C.set_output_root(output_root)
-        self.population = population
-        self.periods = pd.read_parquet(C.period_grid_path())["period_yr"].to_numpy()
-        self._files = sorted(C.power_dir(population).glob("power_shard*.parquet"))
-        if not self._files:
-            raise FileNotFoundError(f"no power_shard*.parquet in {C.power_dir(population)}")
-        self._index = None
-
-    def _build_index(self):
-        """`{source_id: (file, row_group)}` from row-group statistics only."""
-        index = {}
-        for path in self._files:
-            handle = pq.ParquetFile(path)
-            metadata = handle.metadata
-            for group in range(metadata.num_row_groups):
-                stats = metadata.row_group(group).column(0).statistics
-                index[(path, group)] = (stats.min, stats.max)
-        self._index = index
-
-    def power(self, gaia_source_id):
-        """The Delta-chi^2 curve of one system, aligned to `self.periods`."""
-        if self._index is None:
-            self._build_index()
-        source_id = int(gaia_source_id)
-        for (path, group), (lo, hi) in self._index.items():
-            if not (lo <= source_id <= hi):
-                continue
-            block = pq.ParquetFile(path).read_row_group(
-                group, columns=["gaia_source_id", "power"])
-            ids = block.column(0).to_numpy()
-            hit = np.flatnonzero(ids == source_id)
-            if hit.size:
-                return np.asarray(block.column(1)[int(hit[0])].as_py(), float)
-        raise KeyError(f"{source_id} has no stored periodogram in {self.population}")

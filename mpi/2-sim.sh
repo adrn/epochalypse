@@ -18,5 +18,5 @@ export OMP_NUM_THREADS=1
 export JAX_PLATFORMS=cpu          # skip the GPU probe on CPU nodes
 
 date
-mpirun python scripts/run_mpi.py --skip-existing
+mpirun python scripts/simulate_mpi.py --skip-existing
 date

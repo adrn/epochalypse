@@ -13,9 +13,9 @@
 # dataset and would run on a login node; `merge` builds a 5.7 M-row frame in
 # pandas, which is what the 120 GB is for. Drop `merge` and this fits in 8 GB.
 
-cd /mnt/home/apricewhelan/work/epochalypse/periodograms
+cd /mnt/home/apricewhelan/work/epochalypse
 source .venv/bin/activate
 
 date
-python scripts/finish.py --stages calibrate census merge
+python scripts/characterize_finish.py --stages calibrate census merge
 date

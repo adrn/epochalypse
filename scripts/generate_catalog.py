@@ -71,7 +71,8 @@ def select_views(population):
     selected.to_parquet(out, index=False, compression=C.PARQUET_COMPRESSION)
     snr = selected[[c for c in ("snr_total_1", "snr_total_2")
                     if c in selected.columns]].max(axis=1)
-    print(f"  {population}: top {100 * C.HIGH_SNR_FRACTION:g}% of {len(frame):,} -> "
+    print(f"  {population}: SNR_tot >= {C.HIGH_SNR_MIN:g} on every companion, "
+          f"{len(frame):,} -> "
           f"{len(selected):,} systems, SNR_tot >= {snr.min():.1f} "
           f"(median {snr.median():.1f})")
 

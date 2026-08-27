@@ -31,36 +31,16 @@ per-rank BLAS threads would otherwise oversubscribe the cores.
 from __future__ import annotations
 
 import argparse
-import os
 import time
 from pathlib import Path
 
 
 from epochalypse import astrometry as astro
+from epochalypse import mpi
 from epochalypse import config as C
 from epochalypse.sources import ScanLawStore, SourceCatalog
 
 
-def mpi_context():
-    """(comm, rank, size). Falls back to a single rank when mpi4py is absent."""
-    try:
-        from mpi4py import MPI
-    except ImportError:
-        return None, 0, 1
-    comm = MPI.COMM_WORLD
-    return comm, comm.Get_rank(), comm.Get_size()
-
-
-def slice_for_rank(n_sources, rank, size):
-    """This rank's contiguous [start, stop) of the source list.
-
-    The remainder is spread over the first few ranks so the largest and smallest
-    slices differ by at most one source.
-    """
-    base, extra = divmod(n_sources, size)
-    start = rank * base + min(rank, extra)
-    stop = start + base + (1 if rank < extra else 0)
-    return start, stop
 
 
 def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
@@ -69,7 +49,7 @@ def run_rank(populations, rank, size, *, limit=None, skip_existing=False):
     scanlaw = ScanLawStore()
 
     ids = catalog.ids()
-    start, stop = slice_for_rank(len(ids), rank, size)
+    start, stop = mpi.slice_for_rank(len(ids), rank, size)
     mine = ids[start:stop]
     if limit:
         mine = mine[:limit]
@@ -122,26 +102,21 @@ def main(argv=None):
                              "so a rerun only redoes the ranks that died")
     args = parser.parse_args(argv)
 
-    comm, rank, size = mpi_context()
+    comm, rank, size = mpi.mpi_context()
     if args.output_root:
         C.set_output_root(args.output_root)
 
     if rank == 0:
         n_sources = len(SourceCatalog())
-        print(f"ranks       : {size}" + ("" if comm else "  (mpi4py not found -- "
-                                                         "running as a single rank)"))
-        print(f"sources     : {n_sources:,}  ->  ~{n_sources // size:,} per rank")
-        print(f"populations : {', '.join(args.populations)}")
-        print(f"threads/rank: OMP_NUM_THREADS={os.environ.get('OMP_NUM_THREADS', 'unset')}"
-              + ("" if os.environ.get("OMP_NUM_THREADS") == "1"
-                 else "   <- set this to 1 to avoid oversubscription"), flush=True)
+        mpi.banner(comm, size, n_sources, item="sources",
+                   populations=", ".join(args.populations))
 
     started = time.time()
     summary = run_rank(args.populations, rank, size,
                        limit=args.limit, skip_existing=args.skip_existing)
     summary["seconds"] = time.time() - started
 
-    all_summaries = comm.gather(summary, root=0) if comm else [summary]
+    all_summaries = mpi.gather(comm, summary)
     if rank == 0:
         systems = sum(s["n_systems"] for s in all_summaries)
         skipped = sum(s["n_skipped"] for s in all_summaries)

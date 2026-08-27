@@ -112,7 +112,10 @@ POPULATIONS = {"0_companion": 0, "1_companion": 1, "2_companion": 2}
 # The high-SNR sample is not generated. It is the top slice of a random
 # population by recorded SNR_tot, so re-selecting costs seconds and the
 # threshold stays an analysis choice rather than being baked into the data.
-HIGH_SNR_FRACTION = 0.01
+# A system is high-SNR when EVERY injected companion clears this SNR_tot floor.
+# A physical threshold rather than a quantile: the selection size is whatever
+# the data says, and characterization applies the same rule to the same rows.
+HIGH_SNR_MIN = 5.0
 
 # Figure panels: (population, high-SNR?, label). The companion-free control
 # has nothing to plot.

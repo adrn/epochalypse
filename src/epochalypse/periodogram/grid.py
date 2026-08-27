@@ -3,8 +3,8 @@
 `kepmodel` advances the trial frequency by a *fixed* step -- it propagates
 `cos nu t` / `sin nu t` by a rotation rather than recomputing them -- so it
 evaluates only on uniform frequency grids. A single such grid, the way the
-Gaia/OHP tutorial sets one up, is available with `frequency_segments(nfreq=...)`
-and is fine for detection. It is the wrong sampling for *this* measurement,
+Gaia/OHP tutorial sets one up, is fine for detection but is the wrong sampling
+for *this* measurement,
 because the classification spans 7.8 decades in period: a uniform frequency
 step fine enough for 44-minute orbits resolves log-period to ~1e-5 dex there
 (pointlessly fine) and to ~0.1 dex at 3300 yr, leaving a handful of samples in
@@ -45,25 +45,17 @@ def target_dlog(p_min=None, p_max=None, n_periods=None):
     return float(np.log10(p_max / p_min) / (n - 1))
 
 
-def frequency_segments(p_min=None, p_max=None, n_segments=None, dlog=None, nfreq=None):
+def frequency_segments(p_min=None, p_max=None, n_segments=None, dlog=None):
     """The `(nu0, dnu, nfreq)` grids to hand to `kepmodel.periodogram`.
 
     Covers [p_min, p_max] with `n_segments` uniform frequency grids, one per
     equal interval of log-period, each stepped finely enough that its coarsest
     log10-period spacing is at most `dlog`. Within a segment the log-period
     spacing is coarsest at the long-period end, which is what sets the step.
-
-    With `nfreq` given, returns instead the single uniform frequency grid of
-    the Gaia/OHP tutorial.
     """
     p_min = C.P_MIN if p_min is None else float(p_min)
     p_max = C.P_MAX if p_max is None else float(p_max)
     n_segments = C.N_SEGMENTS if n_segments is None else int(n_segments)
-    nu_min, nu_max = TWOPI / p_max, TWOPI / p_min
-
-    if nfreq is not None:                       # tutorial-style: one uniform grid
-        return [(nu_min, (nu_max - nu_min) / (int(nfreq) - 1), int(nfreq))]
-
     dlog = target_dlog(p_min, p_max) if dlog is None else float(dlog)
     edges = np.exp(np.linspace(np.log(p_max), np.log(p_min), n_segments + 1))
     segments = []

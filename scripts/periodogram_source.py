@@ -18,10 +18,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from epochalypse_periodograms import config as C
-from epochalypse_periodograms.grid import frequency_segments, segment_periods
-from epochalypse_periodograms.periodogram import characterize_system
-from epochalypse_periodograms.shards import ShardReader, discover_shards
+from epochalypse.periodogram import config as C
+from epochalypse.periodogram.grid import frequency_segments, segment_periods
+from epochalypse.periodogram.periodogram import characterize_system
+from epochalypse.periodogram.shards import ShardReader, discover_shards
 
 
 def locate(population, gaia_source_id):
