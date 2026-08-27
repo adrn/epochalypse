@@ -1,7 +1,7 @@
 #!/bin/zsh -l
 #SBATCH -J epochalypse-sim
-#SBATCH -o logs/epochalypse-sim.o
-#SBATCH -e logs/epochalypse-sim.e
+#SBATCH -o scripts/mpi/logs/epochalypse-sim.o
+#SBATCH -e scripts/mpi/logs/epochalypse-sim.e
 #SBATCH -N 10
 #SBATCH --ntasks-per-node=32
 #SBATCH --exclusive

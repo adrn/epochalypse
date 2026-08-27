@@ -1,7 +1,7 @@
 #!/bin/zsh -l
 #SBATCH -J epochalypse-pgram
-#SBATCH -o logs/epochalypse-pgram.o
-#SBATCH -e logs/epochalypse-pgram.e
+#SBATCH -o scripts/mpi/logs/epochalypse-pgram.o
+#SBATCH -e scripts/mpi/logs/epochalypse-pgram.e
 #SBATCH -N 10
 #SBATCH --ntasks-per-node=32
 #SBATCH --exclusive

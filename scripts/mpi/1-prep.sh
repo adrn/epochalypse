@@ -1,7 +1,7 @@
 #!/bin/zsh -l
 #SBATCH -J epochalypse-prep
-#SBATCH -o logs/epochalypse-prep.o
-#SBATCH -e logs/epochalypse-prep.e
+#SBATCH -o scripts/mpi/logs/epochalypse-prep.o
+#SBATCH -e scripts/mpi/logs/epochalypse-prep.e
 #SBATCH -N 1
 #SBATCH -c 1
 #SBATCH -t 4:00:00

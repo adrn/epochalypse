@@ -1,7 +1,7 @@
 #!/bin/zsh -l
 #SBATCH -J epochalypse-pgram-finish
-#SBATCH -o logs/epochalypse-pgram-finish.o
-#SBATCH -e logs/epochalypse-pgram-finish.e
+#SBATCH -o scripts/mpi/logs/epochalypse-pgram-finish.o
+#SBATCH -e scripts/mpi/logs/epochalypse-pgram-finish.e
 #SBATCH -N 1
 #SBATCH -t 2:00:00
 #SBATCH -p cca
