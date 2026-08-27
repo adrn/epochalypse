@@ -84,18 +84,20 @@ writes the manifest, and once more in a `gather` at the end to print a summary.
 So there is **no** `-m mpi4py.futures`, no `--mpi` flag, and no `-n` on
 `mpirun` — the allocation already fixes the rank count.
 
-`mpi/1-run.sh` and `mpi/2-finish.sh` are the two job scripts; chain them:
+`scripts/mpi/4-periodograms.sh` and `scripts/mpi/5-periodogram-finish.sh`
+are the two job scripts; chain them:
 
 ```bash
 mkdir -p logs
-run=$(sbatch --parsable mpi/1-run.sh)
-sbatch --dependency=afterok:$run mpi/2-finish.sh
+run=$(sbatch --parsable scripts/mpi/4-periodograms.sh)
+sbatch --dependency=afterok:$run scripts/mpi/5-periodogram-finish.sh
 ```
 
-Both follow the generator's `mpi/*.sh`: `cd` to the checkout,
-`source .venv/bin/activate`, and set their roots at the top. Both pass
-`--catalog-root` and `--output-root`, because at ~915 GB the curves belong on
-scratch rather than in the repo tree (the defaults are `<repo>/outputs` for the
+Both follow the generator's scripts: `cd "${SLURM_SUBMIT_DIR:-.}"`,
+`source .venv/bin/activate`, `source scripts/mpi/env.sh`. Both pass
+`--catalog-root $OUT_ROOT` (the catalog the generator wrote) and
+`--output-root $PGRAM_ROOT`, because at ~915 GB the curves belong on scratch
+rather than in the repo tree (the defaults are `<repo>/outputs` for the
 shards,
 `<repo>/outputs/periodograms` for the results) are the generator's own layout.
 Run `uv sync` once before submitting; the scripts activate `.venv` and call
@@ -142,7 +144,7 @@ scalar Python, so budget **0.5–0.7 s/system** there.
 | 640 | 10 × 64 | 4–5 h |
 | 960 | 15 × 64 | 2.5–3.5 h |
 
-`mpi/1-run.sh` asks for 320 ranks and 12 h, which is the conservative corner of
+`scripts/mpi/4-periodograms.sh` asks for 320 ranks and 12 h, which is the conservative corner of
 that table. The compute is embarrassingly parallel and the I/O is one sequential
 read and one sequential write per unit, so the scaling should hold until the
 filesystem notices — at 960 ranks writing `--power all` that is ~2.6 GB/s of

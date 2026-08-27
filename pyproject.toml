@@ -35,7 +35,7 @@ packages = ["src/epochalypse"]
 # old notebooks. Nothing needs them to build, and the real inputs are 12 GB of
 # gitignored Arrow that must never end up in an archive.
 [tool.hatch.build.targets.sdist]
-only-include = ["src/epochalypse", "scripts", "tests", "mpi",
+only-include = ["src/epochalypse", "scripts", "tests",
                 "README.md", "PIPELINE.md", "PERIODOGRAMS.md"]
 
 [dependency-groups]

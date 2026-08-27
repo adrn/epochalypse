@@ -75,7 +75,7 @@ tests need no dataset.
 
 Outputs are relocatable the same way, with `--output-root`; the periodogram half
 adds `--catalog-root` for reading a catalog someone else generated. All five
-`mpi/*.sh` scripts set their roots at the top.
+`scripts/mpi/*.sh` scripts source `scripts/mpi/env.sh`.
 
 The scan law **must be grouped by `gaia_source_id`**, one contiguous block per
 source, or the offset index is meaningless. `build_indices` verifies this and
@@ -113,22 +113,31 @@ died.
 
 ## On a Slurm cluster
 
-The submit scripts live in `mpi/` and are the source of truth — `1-prep.sh`,
-`2-sim.sh`, `3-finish.sh` for the catalog, then `4-periodograms.sh` and
-`5-periodogram-finish.sh` for the characterization. Each sets its roots at the
-top:
+The submit scripts live in `scripts/mpi/` and are the source of truth —
+`1-prep.sh`, `2-sim.sh`, `3-finish.sh` for the catalog, then
+`4-periodograms.sh` and `5-periodogram-finish.sh` for the characterization.
+
+All three roots live in one place, `scripts/mpi/env.sh`, which every script
+sources:
 
 ```bash
-DATA_ROOT=$CEPH/project-data/epochalypse       # the delivered inputs, ~12 GB
-OUT_ROOT=$CEPH/project-outputs/epochalypse     # the catalog, ~50 GB
+export DATA_ROOT=<scratch>/project-data/epochalypse      # delivered inputs, ~12 GB
+export OUT_ROOT=<scratch>/project-outputs/epochalypse    # the catalog, ~50 GB
+export PGRAM_ROOT=$OUT_ROOT/periodograms                 # raw curves, ~915 GB
 ```
 
+The characterization stages pass `--catalog-root $OUT_ROOT`: the catalog they
+read is what the generator wrote. `--catalog-root` is a separate flag only so
+you can point it at a catalog someone else generated and delivered as a
+directory.
+
+Each script does `cd "${SLURM_SUBMIT_DIR:-.}"`, so **sbatch from the repo root**.
 `mkdir -p logs` first, then chain them:
 
 ```bash
-prep=$(sbatch --parsable mpi/1-prep.sh)
-sim=$(sbatch --parsable --dependency=afterok:$prep mpi/2-sim.sh)
-sbatch --dependency=afterok:$sim mpi/3-finish.sh
+prep=$(sbatch --parsable scripts/mpi/1-prep.sh)
+sim=$(sbatch --parsable --dependency=afterok:$prep scripts/mpi/2-sim.sh)
+sbatch --dependency=afterok:$sim scripts/mpi/3-finish.sh
 ```
 
 Three things about those scripts that are easy to get wrong:
