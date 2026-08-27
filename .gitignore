@@ -11,7 +11,8 @@
 /.venv/
 
 # Slurm job logs (logs/*.o%j, logs/*.e%j)
-/logs/
+**/logs/
 
 __pycache__/
 *.py[cod]
+
