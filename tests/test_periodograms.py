@@ -29,13 +29,19 @@ from epochalypse.periodogram import fitting, grid
 from epochalypse.periodogram import periodogram as pg
 from epochalypse.periodogram import writers
 
-PASSED = []
+CHECKED = []
+CATALOG_ROOT = None
 
 
 def check(name, condition, detail=""):
-    mark = "ok  " if condition else "FAIL"
-    print(f"  [{mark}] {name}" + (f"   {detail}" if detail else ""))
-    PASSED.append(bool(condition))
+    """Assert, and say what was checked -- the detail is the useful half here.
+
+    Asserts rather than accumulating, so a failure stops the run the way
+    `tests/test_pipeline.py` does.
+    """
+    assert condition, f"{name}" + (f"   ({detail})" if detail else "")
+    CHECKED.append(name)
+    print(f"  [ok  ] {name}" + (f"   {detail}" if detail else ""))
 
 
 # ==========================================================================
@@ -56,7 +62,6 @@ def fake_system(n_epochs=90, period=2.3, alpha=0.6, sigma=0.08, seed=0):
 
 
 def test_grid():
-    print("grid")
     segments = grid.frequency_segments()
     periods = grid.segment_periods(segments)
     dlog = np.diff(np.log10(periods))
@@ -64,9 +69,10 @@ def test_grid():
     check("brackets the injected prior",
           periods[0] <= C.P_MIN * 1.001 and periods[-1] >= C.P_MAX * 0.999,
           f"{periods[0]:.3e} .. {periods[-1]:.1f} yr")
+    target = grid.describe(segments)["target_dlog"]
     check("no coarser than the baseline grid anywhere",
-          dlog.max() <= grid.target_dlog() * 1.001,
-          f"max dlogP = {dlog.max():.3e} <= {grid.target_dlog():.3e}")
+          dlog.max() <= target * 1.001,
+          f"max dlogP = {dlog.max():.3e} <= {target:.3e}")
     check("strictly ascending, no duplicates", bool((dlog > 0).all()))
     check("~35% more samples than the baseline's trial count",
           1.2 < len(periods) / C.BASELINE_N_PERIODS < 1.6,
@@ -82,11 +88,10 @@ def test_grid():
           f"{len(visited):,} periods, max rel diff "
           f"{np.abs(visited / periods - 1).max():.1e}")
     check("power is aligned to it", power.shape == periods.shape)
-    return segments, periods
 
 
-def test_periodogram(segments):
-    print("\nperiodogram + classifier")
+def test_periodogram():
+    segments = grid.frequency_segments()
     period = 2.3
     t, psi, pf, y, yerr = fake_system(period=period, alpha=0.6, sigma=0.05)
     periods, power, info = pg.kepmodel_power(t, psi, pf, y, yerr, segments=segments)
@@ -124,7 +129,6 @@ def test_periodogram(segments):
 
 
 def test_subsample():
-    print("\npaper subsample")
     # The cutoff is a quantile of the parent sample; a single id can be tested
     # against it with no table, which is the property the ranks depend on.
     ids = np.array([5484066448309985152, 424187226612669312, 1, 2, 3], dtype="int64")
@@ -140,7 +144,6 @@ def test_subsample():
 
 
 def test_calibration():
-    print("\ncalibration")
     rng = np.random.default_rng(4)
     top = rng.chisquare(4, 200_000) * 30.0
     accel = rng.chisquare(2, 200_000) * 10.0
@@ -168,8 +171,14 @@ def test_calibration():
 # ==========================================================================
 # Against the real catalog
 # ==========================================================================
-def test_shards(segments, periods, catalog_root, population="1_companion", n_systems=12):
-    print(f"\nshards  ({catalog_root})")
+def test_shards(population="1_companion", n_systems=12):
+    catalog_root = CATALOG_ROOT
+    if catalog_root is None:
+        print("  (skipped -- pass --catalog-root to run these)")
+        return
+    segments = grid.frequency_segments()
+    periods = grid.segment_periods(segments)
+    print(f"  catalog: {catalog_root}")
     from epochalypse.periodogram.unit import run_unit
 
     from epochalypse.periodogram.shards import ShardReader, discover_shards, work_units
@@ -254,23 +263,45 @@ def test_shards(segments, periods, catalog_root, population="1_companion", n_sys
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_subsample_cutoff_matches_the_parent_sample():
+    """`SUBSAMPLE_RANK_CUTOFF` is a hash quantile pinned to one parent sample.
+
+    It silently selects the wrong subsample if the sample, the seed, or the
+    subsample size changes -- and the maintenance stage that used to re-derive
+    it is gone. This is that check, where a real parent sample exists.
+    """
+    if CATALOG_ROOT is None:
+        print("  (skipped -- pass --catalog-root to run this)")
+        return
+    C.set_catalog_root(CATALOG_ROOT)
+    merged = C.catalog_data_dir() / "injected_solutions_0_companion.parquet"
+    if not merged.exists():
+        print(f"  (skipped -- {merged.name} not in this catalog)")
+        return
+    ids = pd.read_parquet(merged, columns=["gaia_source_id"])["gaia_source_id"].to_numpy()
+    ranks = np.sort(writers.source_id_ranks(ids))
+    cutoff = int(ranks[C.SUBSAMPLE_SIZE - 1])
+    check("parent sample size matches config", len(ids) == C.SUBSAMPLE_PARENT_SIZE,
+          f"{len(ids):,} vs {C.SUBSAMPLE_PARENT_SIZE:,}")
+    check("SUBSAMPLE_RANK_CUTOFF is still the right quantile",
+          cutoff == C.SUBSAMPLE_RANK_CUTOFF,
+          f"{cutoff} vs {C.SUBSAMPLE_RANK_CUTOFF}")
+
+
 def main(argv=None):
+    global CATALOG_ROOT
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog-root", type=Path, default=None,
                         help="run the shard tests against this catalog too")
-    args = parser.parse_args(argv)
+    CATALOG_ROOT = parser.parse_args(argv).catalog_root
 
-    segments, periods = test_grid()
-    test_periodogram(segments)
-    test_subsample()
-    test_calibration()
-    if args.catalog_root:
-        test_shards(segments, periods, args.catalog_root)
-    else:
-        print("\nshards  (skipped -- pass --catalog-root to run them)")
-
-    print(f"\n{sum(PASSED)}/{len(PASSED)} checks passed")
-    return 0 if all(PASSED) else 1
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    for test in tests:
+        print(f"\n{test.__name__[5:].replace('_', ' ')}")
+        test()
+    print(f"\n{len(CHECKED)} checks passed across {len(tests)} tests")
+    return 0
 
 
 if __name__ == "__main__":

@@ -20,9 +20,10 @@ class BufferedParquetWriter:
     """Append row groups to `path`, atomically. Subclass and define `_table`."""
 
     def __init__(self, path, flush_every, compression, compression_level=None,
-                 **writer_kwargs):
+                 mkdir=True, **writer_kwargs):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if mkdir:                      # a disabled writer creates nothing
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._tmp = self.path.with_suffix(".parquet.tmp")
         self._flush_every = int(flush_every)
         self._compression = compression

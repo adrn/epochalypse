@@ -25,7 +25,7 @@ fact rather than assumed, because the channels are not quite independent.
 
 The thresholds MUST be recalibrated for any change in the grid, the bounds, or
 the noise model. The look-elsewhere inflation grows with the trial count, and
-with `FIT_JITTER = True` the orbit channel moves by orders of magnitude.
+a different noise model would move the orbit channel by orders of magnitude.
 """
 from __future__ import annotations
 
@@ -47,15 +47,13 @@ def thresholds_from_null(top_power, accel_delta_chi2, target_fp=None):
             float(np.nanpercentile(np.asarray(accel_delta_chi2, float), q)))
 
 
-def calibrate(population="0_companion", target_fp=None, output_root=None):
+def calibrate(population="0_companion", target_fp=None):
     """Read the control population's characterization and derive the thresholds.
 
     Only two columns are read off disk. At 5.7 M rows that is ~90 MB rather than
     the ~2 GB the whole table would be, which is the difference between this
     running on a login node and not.
     """
-    if output_root is not None:
-        C.set_output_root(output_root)
     dataset = ds.dataset(C.chars_dir(population), format="parquet")
     table = dataset.to_table(columns=["top_power", "accel_delta_chi2"])
     top = table.column("top_power").to_numpy(zero_copy_only=False)
@@ -73,20 +71,7 @@ def calibrate(population="0_companion", target_fp=None, output_root=None):
         "realized_fp": float((peak | acc).mean()),
         "realized_fp_peak": float(peak.mean()),
         "realized_fp_accel": float(acc.mean()),
-        "fit_jitter": C.FIT_JITTER,
     }
-
-
-def write_calibration(calibration, path=None):
-    path = C.calibration_path() if path is None else Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(calibration, indent=2) + "\n")
-    return path
-
-
-def read_calibration(path=None):
-    path = C.calibration_path() if path is None else Path(path)
-    return json.loads(Path(path).read_text())
 
 
 def apply_calibration(frame, thr_orbit=None, thr_accel=None, baseline=None):
@@ -108,7 +93,7 @@ def apply_calibration(frame, thr_orbit=None, thr_accel=None, baseline=None):
     system can be called period-localized on the acceleration channel alone.
     """
     if thr_orbit is None or thr_accel is None:
-        calibration = read_calibration()
+        calibration = json.loads(C.calibration_path().read_text())
         thr_orbit = calibration["thr_orbit"] if thr_orbit is None else thr_orbit
         thr_accel = calibration["thr_accel"] if thr_accel is None else thr_accel
     baseline = C.DR4_BASELINE_YEARS if baseline is None else baseline
@@ -146,14 +131,12 @@ def select_high_snr(frame, snr_min=None):
     return frame[np.isfinite(snr).all(axis=1) & (snr >= snr_min).all(axis=1)]
 
 
-def census(population, thr_orbit=None, thr_accel=None, columns=None, output_root=None):
+def census(population, thr_orbit=None, thr_accel=None, columns=None):
     """Class counts for one population, and for its high-SNR subset.
 
     Reads only the columns the classification needs, so this runs over 5.7 M
     systems in seconds and is the cheapest check that a run came out sane.
     """
-    if output_root is not None:
-        C.set_output_root(output_root)
     needed = ["top_power", "accel_delta_chi2", "klass", "best_period",
               "snr_total_1", "snr_total_2"]
     available = set(ds.dataset(C.chars_dir(population), format="parquet").schema.names)
@@ -174,7 +157,7 @@ def census(population, thr_orbit=None, thr_accel=None, columns=None, output_root
     return out
 
 
-def load_characterization(population, columns=None, high_snr=False, output_root=None):
+def load_characterization(population, columns=None, high_snr=False):
     """One population's characterization table as a DataFrame, flags applied.
 
     `columns` is worth passing: the full table is ~70 columns over 5.7 M rows,
@@ -185,8 +168,6 @@ def load_characterization(population, columns=None, high_snr=False, output_root=
     read -- the high-SNR population is a row selection of this same table, not
     a separate run.
     """
-    if output_root is not None:
-        C.set_output_root(output_root)
     dataset = ds.dataset(C.chars_dir(population), format="parquet")
     if columns is not None:
         needed = {"top_power", "accel_delta_chi2", "klass", "best_period"}
@@ -205,7 +186,7 @@ def merged_path(population, high_snr=False):
     return C.OUTPUT_ROOT / f"characterization_{population}{suffix}.parquet"
 
 
-def merge(population, high_snr=False, columns=None, output_root=None):
+def merge(population, high_snr=False, columns=None):
     """Write one population's shards out as a single parquet file.
 
     Optional -- every reader in this package takes the sharded directory
@@ -214,8 +195,6 @@ def merge(population, high_snr=False, columns=None, output_root=None):
     files, and because the high-SNR views are small enough (400 k and 17 k rows)
     to be worth materializing.
     """
-    if output_root is not None:
-        C.set_output_root(output_root)
     frame = load_characterization(population, columns=columns, high_snr=high_snr)
     path = merged_path(population, high_snr)
     tmp = path.with_suffix(".parquet.tmp")

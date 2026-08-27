@@ -175,35 +175,7 @@ N_SEGMENTS = 32
 # *everywhere*. Held at ~688 trials per e-fold across every revision of the
 # bounds, so `width_dex` stays comparable with earlier runs.
 BASELINE_N_PERIODS = 12383
-TARGET_DLOG = None  # None -> derived from P_MIN, P_MAX, BASELINE_N_PERIODS
 
-# ==========================================================================
-# Noise model
-# ==========================================================================
-# False: fixed 1/sigma_formal^2 weights, a like-for-like swap of the period
-# search alone, and what the paper figures use. True: fit kepmodel's
-# excess-noise term on the companion-free model before the search.
-#
-# False is also `kepmodel`'s own default: `AstroModel(..., excess_noise=
-# term.Jitter(0))` puts the term in the covariance but leaves it out of
-# `fit_param`, so it is held at zero unless a caller adds it. The Gaia/OHP
-# tutorial adds it, in a step of its own before the periodogram
-# (`model.fit_param += ['cov.excess_noise.sig']; model.fit()`) -- so "the
-# documented default" points both ways depending on whether the library or the
-# tutorial is being read.
-#
-# True is a genuinely different noise model, not a refinement. Fitted with no
-# orbit in the model, the term absorbs the companion's signal along with the
-# excess scatter, and chi2_base (hence the whole Delta-chi^2 scale) collapses
-# by one to two orders of magnitude on strongly-signalled systems -- detections
-# are suppressed along with false positives. The argument the other way is
-# real: the catalog injects scatter at sigma_UEVA and reports sigma_formal, so
-# there is excess the fixed weights genuinely do not capture. Thresholds are
-# recalibrated on the matched control either way, so both runs are internally
-# self-consistent, but their `top_power` columns are on different scales and
-# must never be compared numerically. Running both is a straight 2x: the
-# frequency loop dominates and nothing is shared between them.
-FIT_JITTER = False
 
 # ==========================================================================
 # Classification
@@ -237,10 +209,9 @@ POWER_FLUSH_EVERY = 500    # ~27 MB of float32 power per row group
 # catalog it was computed from, which is why it is not the default. "subsample"
 # keeps the paper's 10,000 stars per population, 1.6 GB, and any other curve can
 # be regenerated from its epochs in 0.34 s (see `periodogram_source.py`).
-# POWER_DECIMATE and POWER_DTYPE shrink "all" without changing which systems are
+# POWER_DTYPE shrinks "all" without changing which systems are
 # stored, if it is ever wanted; see PERIODOGRAMS.md.
 POWER_MODE = "subsample"    # "all" | "subsample" | "none"
-POWER_DECIMATE = 1          # keep every Nth grid point (1 = the full grid)
 POWER_DTYPE = "float32"     # "float32" | "float16"
 
 # The paper's shared down-selection, for POWER_MODE == "subsample": the rule in

@@ -4,9 +4,8 @@
 Serial, cheap, and none of it needs a cluster -- every stage reads a handful of
 columns out of the parquet dataset rather than the whole table.
 
-    python scripts/finish.py --stages calibrate census
-    python scripts/finish.py --stages merge --populations 1_companion
-    python scripts/finish.py --stages subsample-cutoff
+    python scripts/characterize_finish.py --stages calibrate census
+    python scripts/characterize_finish.py --stages merge --populations 1_companion
 
 Stages:
 
@@ -14,9 +13,6 @@ Stages:
   census            class counts per population, and for the high-SNR subsets
   merge             each population's 320 shards -> one parquet, plus the
                     high-SNR views (small enough to be worth materializing)
-  subsample-cutoff  re-derive `config.SUBSAMPLE_RANK_CUTOFF` from the merged
-                    truth table; only needed if the parent sample, the seed or
-                    the subsample size changes
 """
 from __future__ import annotations
 
@@ -24,21 +20,18 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 
 from epochalypse.periodogram import calibrate as cal
 from epochalypse.periodogram import config as C
 
-STAGES = ("calibrate", "census", "merge", "subsample-cutoff")
-
-# Columns worth keeping in a merged file: everything the three paper figures
-# read, and nothing that only exists to trace a row back to its epochs.
+STAGES = ("calibrate", "census", "merge")
 
 
 def stage_calibrate(args):
     calibration = cal.calibrate(target_fp=None)
-    path = cal.write_calibration(calibration)
+    path = C.calibration_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(calibration, indent=2) + "\n")
     print(f"thresholds from {calibration['n_null_systems']:,} companion-free systems "
           f"@ FP={calibration['target_fp']:.1%}")
     print(f"  orbit Delta-chi2 > {calibration['thr_orbit']:10.1f}   "
@@ -51,7 +44,7 @@ def stage_calibrate(args):
 
 
 def stage_census(args):
-    calibration = cal.read_calibration()
+    calibration = json.loads(C.calibration_path().read_text())
     print(f"{'population':<26}{'n':>12}{'undetected':>14}{'localized':>12}{'not localized':>16}")
     for population in args.populations:
         counts = cal.census(population, calibration["thr_orbit"], calibration["thr_accel"])
@@ -73,25 +66,6 @@ def stage_merge(args):
             print(f"  {path.name:<52} {n:>10,} rows  {size:6.2f} GB", flush=True)
 
 
-def stage_subsample_cutoff(args):
-    """Re-derive the rank quantile `writers.in_paper_subsample` compares against."""
-    from epochalypse.periodogram.writers import source_id_ranks
-
-    merged = C.catalog_data_dir() / "injected_solutions_0_companion.parquet"
-    ids = pd.read_parquet(merged, columns=["gaia_source_id"])["gaia_source_id"].to_numpy()
-    ranks = np.sort(source_id_ranks(ids))
-    cutoff = int(ranks[C.SUBSAMPLE_SIZE - 1])
-    print(f"parent sample        : {len(ids):,} source ids  ({merged.name})")
-    print(f"subsample            : {C.SUBSAMPLE_SIZE:,} at seed {C.SUBSAMPLE_SEED}")
-    print(f"SUBSAMPLE_RANK_CUTOFF = {cutoff}")
-    print(f"  next rank up       = {int(ranks[C.SUBSAMPLE_SIZE])}  (the gap is the margin)")
-    if cutoff != C.SUBSAMPLE_RANK_CUTOFF or len(ids) != C.SUBSAMPLE_PARENT_SIZE:
-        print("\n  !! config.py disagrees -- update SUBSAMPLE_RANK_CUTOFF and "
-              "SUBSAMPLE_PARENT_SIZE")
-    else:
-        print("\n  config.py agrees.")
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -100,8 +74,6 @@ def main(argv=None):
                         default=list(C.POPULATIONS))
     parser.add_argument("--catalog-root", type=Path)
     parser.add_argument("--output-root", type=Path)
-    parser.add_argument("--target-fp", type=float, default=None,
-                        help=f"null false-positive rate (default {C.TARGET_FP})")
     args = parser.parse_args(argv)
 
     if args.catalog_root:
@@ -112,12 +84,12 @@ def main(argv=None):
     if C.manifest_path().exists():
         manifest = json.loads(C.manifest_path().read_text())
         print(f"run: {manifest['written']}  grid {manifest['grid']['n_periods']:,} periods  "
-              f"fit_jitter={manifest['fit_jitter']}  curves={manifest['power']['mode']}\n")
+              f"curves={manifest['power']['mode']}\n")
 
     for stage in args.stages:
         print(f"=== {stage} ===")
-        {"calibrate": stage_calibrate, "census": stage_census, "merge": stage_merge,
-         "subsample-cutoff": stage_subsample_cutoff}[stage](args)
+        {"calibrate": stage_calibrate, "census": stage_census,
+         "merge": stage_merge}[stage](args)
         print()
     return 0
 

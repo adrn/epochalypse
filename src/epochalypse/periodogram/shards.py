@@ -77,7 +77,7 @@ def work_units(populations=None, n_parts=1):
     populations = C.POPULATIONS if populations is None else tuple(populations)
     units = []
     for population in populations:
-        numbers, n_shards = discover_shards(population) if catalog else ([], 0)
+        numbers, n_shards = discover_shards(population)
         for shard in numbers:
             for part in range(n_parts):
                 units.append((population, shard, n_shards, part, n_parts))

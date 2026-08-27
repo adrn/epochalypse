@@ -37,7 +37,6 @@ Set OMP_NUM_THREADS=1 in the job script: the per-system arrays are tiny, BLAS
 threads buy nothing, and with tens of ranks per node they oversubscribe the
 cores.
 """
-from __future__ import annotations
 
 import argparse
 import json
@@ -45,16 +44,13 @@ import platform
 import time
 from pathlib import Path
 
-from epochalypse.periodogram.unit import run_unit
-
-from epochalypse.periodogram import __version__
 from epochalypse import mpi
+from epochalypse.periodogram import __version__
 from epochalypse.periodogram import config as C
 from epochalypse.periodogram import grid as G
 from epochalypse.periodogram.shards import work_units
+from epochalypse.periodogram.unit import run_unit
 from epochalypse.periodogram.writers import write_period_grid
-
-
 
 
 def write_manifest(segments, args, size):
@@ -74,23 +70,28 @@ def write_manifest(segments, args, size):
         "output_root": str(C.OUTPUT_ROOT),
         "populations": list(args.populations),
         "grid": G.describe(segments),
-        "grid_config": {"p_min_yr": C.P_MIN, "p_max_yr": C.P_MAX,
-                        "n_segments": C.N_SEGMENTS,
-                        "baseline_n_periods": C.BASELINE_N_PERIODS},
-        "fit_jitter": C.FIT_JITTER,
-        "classifier": {"delta_bic_detect": C.DELTA_BIC_DETECT,
-                       "delta_power_unimodal": C.DELTA_POWER_UNIMODAL,
-                       "min_separation_dex": C.MIN_SEPARATION_DEX,
-                       "width_delta": C.WIDTH_DELTA,
-                       "width_constrained_dex": C.WIDTH_CONSTRAINED_DEX,
-                       "edge_frac": C.EDGE_FRAC,
-                       "period_recover_tol": C.PERIOD_RECOVER_TOL},
-        "power": {"mode": args.power or C.POWER_MODE,
-                  "decimate": C.POWER_DECIMATE,
-                  "dtype": C.POWER_DTYPE,
-                  "subsample_size": C.SUBSAMPLE_SIZE,
-                  "subsample_seed": C.SUBSAMPLE_SEED,
-                  "subsample_rank_cutoff": C.SUBSAMPLE_RANK_CUTOFF},
+        "grid_config": {
+            "p_min_yr": C.P_MIN,
+            "p_max_yr": C.P_MAX,
+            "n_segments": C.N_SEGMENTS,
+            "baseline_n_periods": C.BASELINE_N_PERIODS,
+        },
+        "classifier": {
+            "delta_bic_detect": C.DELTA_BIC_DETECT,
+            "delta_power_unimodal": C.DELTA_POWER_UNIMODAL,
+            "min_separation_dex": C.MIN_SEPARATION_DEX,
+            "width_delta": C.WIDTH_DELTA,
+            "width_constrained_dex": C.WIDTH_CONSTRAINED_DEX,
+            "edge_frac": C.EDGE_FRAC,
+            "period_recover_tol": C.PERIOD_RECOVER_TOL,
+        },
+        "power": {
+            "mode": args.power or C.POWER_MODE,
+            "dtype": C.POWER_DTYPE,
+            "subsample_size": C.SUBSAMPLE_SIZE,
+            "subsample_seed": C.SUBSAMPLE_SEED,
+            "subsample_rank_cutoff": C.SUBSAMPLE_RANK_CUTOFF,
+        },
         "high_snr_min": C.HIGH_SNR_MIN,
         "target_fp": C.TARGET_FP,
     }
@@ -102,26 +103,50 @@ def write_manifest(segments, args, size):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--populations", nargs="+", choices=list(C.POPULATIONS),
-                        default=list(C.POPULATIONS))
-    parser.add_argument("--catalog-root", type=Path,
-                        help="the generated catalog to read (contains data/)")
-    parser.add_argument("--output-root", type=Path,
-                        help="write results here instead of <repo>/outputs")
-    parser.add_argument("--n-parts", type=int, default=1,
-                        help="cut each shard into this many units (only for >960 ranks)")
-    parser.add_argument("--power", choices=("all", "subsample", "none"), default=None,
-                        help=f"which systems keep a raw curve (default {C.POWER_MODE})")
-    parser.add_argument("--limit", type=int,
-                        help="cap systems per unit (smoke tests only)")
-    parser.add_argument("--max-units", type=int,
-                        help="use only the first N work units (smoke tests only). "
-                             "--limit alone still walks all 960 of them, which on one "
-                             "process is hours -- pass this too")
-    parser.add_argument("--skip-existing", action="store_true",
-                        help="skip a unit whose output already exists, so a rerun "
-                             "only redoes the units that died")
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--populations",
+        nargs="+",
+        choices=list(C.POPULATIONS),
+        default=list(C.POPULATIONS),
+    )
+    parser.add_argument(
+        "--catalog-root",
+        type=Path,
+        help="the generated catalog to read (contains data/)",
+    )
+    parser.add_argument(
+        "--output-root", type=Path, help="write results here instead of <repo>/outputs"
+    )
+    parser.add_argument(
+        "--n-parts",
+        type=int,
+        default=1,
+        help="cut each shard into this many units (only for >960 ranks)",
+    )
+    parser.add_argument(
+        "--power",
+        choices=("all", "subsample", "none"),
+        default=None,
+        help=f"which systems keep a raw curve (default {C.POWER_MODE})",
+    )
+    parser.add_argument(
+        "--limit", type=int, help="cap systems per unit (smoke tests only)"
+    )
+    parser.add_argument(
+        "--max-units",
+        type=int,
+        help="use only the first N work units (smoke tests only). "
+        "--limit alone still walks all 960 of them, which on one "
+        "process is hours -- pass this too",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip a unit whose output already exists, so a rerun "
+        "only redoes the units that died",
+    )
     args = parser.parse_args(argv)
 
     comm, rank, size = mpi.mpi_context()
@@ -135,44 +160,68 @@ def main(argv=None):
     units = work_units(args.populations, args.n_parts)
     if args.max_units:
         # Truncate before the slice, so every rank agrees on the same short list.
-        units = units[:args.max_units]
+        units = units[: args.max_units]
 
     if rank == 0:
         described = G.describe(segments)
         mpi.banner(
-            comm, size, len(units), item="work units",
+            comm,
+            size,
+            len(units),
+            item="work units",
             catalog=C.CATALOG_ROOT,
             output=C.OUTPUT_ROOT,
             populations=", ".join(args.populations),
-            grid=(f"{described['n_periods']:,} trial periods, "
-                  f"{described['p_min_yr']:.2e} - {described['p_max_yr']:.0f} yr, "
-                  f"{described['n_segments']} segments, "
-                  f"dlogP <= {described['dlog_max']:.2e}"),
-            curves=args.power or C.POWER_MODE)
+            grid=(
+                f"{described['n_periods']:,} trial periods, "
+                f"{described['p_min_yr']:.2e} - {described['p_max_yr']:.0f} yr, "
+                f"{described['n_segments']} segments, "
+                f"dlogP <= {described['dlog_max']:.2e}"
+            ),
+            curves=args.power or C.POWER_MODE,
+        )
         write_manifest(segments, args, size)
         write_period_grid(periods)
-        print(f"wrote       : {C.manifest_path().name}, {C.period_grid_path().name}\n",
-              flush=True)
+        print(
+            f"wrote       : {C.manifest_path().name}, {C.period_grid_path().name}\n",
+            flush=True,
+        )
 
-    if comm is not None:       # every rank waits for the manifest and the grid file
+    if comm is not None:  # every rank waits for the manifest and the grid file
         comm.Barrier()
 
     start, stop = mpi.slice_for_rank(len(units), rank, size)
     started = time.time()
     summaries = []
     for population, shard, n_shards, part, n_parts in units[start:stop]:
-        summaries.append(run_unit(
-            population, shard, n_shards, part, n_parts, segments=segments,
-            limit=args.limit, skip_existing=args.skip_existing, power_mode=args.power,
-            verbose=True, progress_every=0))
+        summaries.append(
+            run_unit(
+                population,
+                shard,
+                n_shards,
+                part,
+                n_parts,
+                segments=segments,
+                limit=args.limit,
+                skip_existing=args.skip_existing,
+                power_mode=args.power,
+                verbose=True,
+                progress_every=0,
+            )
+        )
 
-    mine = {"rank": rank,
-            "n_units": len(summaries),
-            "n_systems": sum(s["n_systems"] for s in summaries),
-            "n_failed": sum(s["n_failed"] for s in summaries),
-            "seconds": time.time() - started}
-    print(f"[rank {rank:05d}] {mine['n_units']} unit(s), {mine['n_systems']:,} systems "
-          f"in {mine['seconds'] / 60:.1f} min", flush=True)
+    mine = {
+        "rank": rank,
+        "n_units": len(summaries),
+        "n_systems": sum(s["n_systems"] for s in summaries),
+        "n_failed": sum(s["n_failed"] for s in summaries),
+        "seconds": time.time() - started,
+    }
+    print(
+        f"[rank {rank:05d}] {mine['n_units']} unit(s), {mine['n_systems']:,} systems "
+        f"in {mine['seconds'] / 60:.1f} min",
+        flush=True,
+    )
 
     everyone = mpi.gather(comm, mine)
     if rank == 0:
@@ -182,8 +231,10 @@ def main(argv=None):
         print(f"\ndone: {systems:,} systems across {size} rank(s)")
         print(f"  slowest rank : {slowest / 3600:.2f} h")
         if systems:
-            print(f"  per system   : {slowest * size / systems * 1e3:.0f} ms "
-                  f"(core-hours: {sum(s['seconds'] for s in everyone) / 3600:,.0f})")
+            print(
+                f"  per system   : {slowest * size / systems * 1e3:.0f} ms "
+                f"(core-hours: {sum(s['seconds'] for s in everyone) / 3600:,.0f})"
+            )
         if failed:
             print(f"  failed       : {failed:,} systems (see {C.failed_dir()})")
         print("  next         : python scripts/finish.py --stages calibrate census")

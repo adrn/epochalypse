@@ -10,7 +10,7 @@ offsets, two proper-motion terms, each projected on the scan angle) span exactly
 the same subspace as `fitting.astrometric_design_matrix`, and `kepmodel`'s four
 periodogram columns (`cth cos nu t, sth cos nu t, cth sin nu t, sth sin nu t`)
 span exactly the in-house pipeline's circular Thiele-Innes columns. With
-`fit_jitter=False` the two periodograms are therefore the *same statistic* in
+fixed formal weights the two periodograms are therefore the *same statistic* in
 exact arithmetic, computed along completely different routes.
 
 **Grid: kepmodel's own, no interpolation.** Every number reported here is an
@@ -58,12 +58,12 @@ from . import fitting
 from .grid import TWOPI, frequency_segments
 
 
-def build_model(t, psi, pf, y, yerr, fit_jitter=False):
+def build_model(t, psi, pf, y, yerr):
     """The five-parameter single-star `kepmodel` astrometric model, linear terms fitted.
 
     The scan-angle convention is `kepmodel`'s: the along-scan abscissa is
-    `cth * ddelta + sth * dalpha`. Returns `(model, excess_noise_mas)`. With
-    `fit_jitter=True` the excess-noise term is fitted jointly with the linear
+    `cth * ddelta + sth * dalpha`. Returns the model. The excess-noise term is
+    held at zero: the search uses fixed 1/sigma_formal^2 weights, which is what
     parameters on the companion-free model; a fit that fails to converge falls
     back to zero jitter (reported as NaN) rather than dropping the system.
 
@@ -85,25 +85,15 @@ def build_model(t, psi, pf, y, yerr, fit_jitter=False):
     model.add_lin(t * sth, 'mu_alpha')
     model.fit_lin()
 
-    excess = 0.0
-    if fit_jitter:
-        model.fit_param = list(model.fit_param) + ['cov.excess_noise.sig']
-        try:
-            model.fit()
-            excess = float(model.get_param('cov.excess_noise.sig'))
-        except Exception:                     # non-convergence -> the fixed-weight model
-            model.set_param(0.0, 'cov.excess_noise.sig')
-            model.fit_lin()
-            excess = np.nan
-    return model, excess
+    return model
 
 
-def kepmodel_power(t, psi, pf, y, yerr, segments=None, fit_jitter=False):
+def kepmodel_power(t, psi, pf, y, yerr, segments=None):
     """Run the periodogram; return `(periods, power, info)`.
 
     `periods` are the trial periods kepmodel visited (ascending), `power` the
     Delta-chi^2 `chi2_base - chi2(period)` at each of them -- no interpolation
-    anywhere. `info` carries the base chi^2, the fitted excess noise, the
+    anywhere. `info` carries the base chi^2, the
     analytic FAP of the highest peak, and the number of trial frequencies.
 
     `periods` is `grid.segment_periods(segments)` by construction: the same
@@ -112,7 +102,7 @@ def kepmodel_power(t, psi, pf, y, yerr, segments=None, fit_jitter=False):
     beside every stored curve, and `tests/test_periodograms.py` asserts it.
     """
     segments = frequency_segments() if segments is None else segments
-    model, excess = build_model(t, psi, pf, y, yerr, fit_jitter=fit_jitter)
+    model = build_model(t, psi, pf, y, yerr)
 
     # chi2 of the fitted five-parameter model in the whitened metric == kepmodel's
     # normalisation chi2_base (every linear parameter is fitted, so the profiled
@@ -138,7 +128,7 @@ def kepmodel_power(t, psi, pf, y, yerr, segments=None, fit_jitter=False):
         fap = np.nan
 
     return (TWOPI / nu)[::-1], (z * chi2_base)[::-1], {
-        "chi2_base": chi2_base, "excess_noise_mas": excess,
+        "chi2_base": chi2_base,
         "fap": fap, "n_freq": int(nu.size)}
 
 
@@ -226,7 +216,7 @@ def classify_periodogram(periods, power, n_epochs):
 
 
 def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
-                        fit_jitter=None, want_power=False):
+                        want_power=False):
     """Search, classify, and test one system. Returns `(record, power)`.
 
     `record` is the one row this system contributes to the characterization
@@ -239,11 +229,10 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
     `period_k`. Nothing else about it is read here -- the rest of the truth
     columns are joined by the writer, which has the whole shard's table.
     """
-    fit_jitter = C.FIT_JITTER if fit_jitter is None else fit_jitter
     n = len(y)
 
     periods, power, info = kepmodel_power(t, psi, pf, y, yerr,
-                                          segments=segments, fit_jitter=fit_jitter)
+                                          segments=segments)
     res = classify_periodogram(periods, power, n)
     accel_dchi2 = fitting.acceleration_delta_chi2(t, psi, pf, y, yerr)
     accel_dbic = accel_dchi2 - 2.0 * np.log(max(n, 2))
@@ -272,7 +261,6 @@ def characterize_system(t, psi, pf, y, yerr, truth=None, segments=None,
         "detected": bool(detected),
         "period_reliable": period_reliable,
         "kepmodel_fap": info["fap"],
-        "kepmodel_excess_noise_mas": info["excess_noise_mas"],
     }
     for k in range(2):                              # the two tallest peaks, for the truth match
         record[f"peak{k + 1}_period"] = (res["top_periods"][k]

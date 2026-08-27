@@ -63,11 +63,10 @@ def main(argv=None):
     periods = segment_periods(segments)
     with ShardReader(args.population, shard, n_shards) as reader:
         truth = reader.truths.iloc[row]
-        # iter_systems walks the part containing this row; ask for the single
-        # row rather than filtering afterwards, so only its row group is read.
-        n = len(reader.truths)
-        for index, tr, t, psi, pf, y, yerr in reader.iter_systems(row, n):
-            break
+        # one part per row, so the part containing `row` IS that row -- only
+        # its row group is read
+        _, _, t, psi, pf, y, yerr = next(iter(
+            reader.iter_systems(row, len(reader.truths))))
 
     record, power = characterize_system(t, psi, pf, y, yerr, truth=truth,
                                         segments=segments, want_power=True)

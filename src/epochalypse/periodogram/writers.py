@@ -16,7 +16,7 @@ number and `POWER_MODE` is how it is managed:
 | `subsample` | the paper's 10,000-star sample per population | ~1.6 GB |
 | `none` | nothing | 0 |
 
-`POWER_DECIMATE` and `POWER_DTYPE` shrink it without changing *which* systems
+`POWER_DTYPE` shrinks it without changing *which* systems
 are kept: decimating by 4 and storing float16 is ~115 GB and still a perfectly
 readable figure, because every summary statistic the classification depends on
 (`width_dex`, `top_power`, `best_period`) was computed on the full-resolution
@@ -101,34 +101,6 @@ def truth_columns(population):
     return columns
 
 
-def to_analysis_schema(frame):
-    """Add the aliases `epochalypse_figures` reads, alongside the originals.
-
-    The generator records companion masses in Jupiter masses and inclinations
-    in degrees; the figure stack reads `Mp_k_msun` and `i_k_rad`. Both unit
-    conversions happen here and nowhere else -- the same mapping
-    `sharded_systems.to_analysis_schema` writes down, so a figure cell is
-    identical whether it is fed a 10,000-system subset or this table.
-
-    The originals are kept rather than renamed: five extra columns per
-    companion is a rounding error against 70, and it means the table can be
-    read back by anything that speaks either vocabulary.
-    """
-    added = {}
-    for k in (1, 2):
-        for source, target, factor in ((f"sma_{k}", f"a_{k}_au", 1.0),
-                                       (f"ecc_{k}", f"e_{k}", 1.0),
-                                       (f"mass_pl_{k}", f"Mp_{k}_msun", C.MJUP_IN_MSUN),
-                                       (f"alpha_mas_{k}", f"alpha_{k}_mas", 1.0)):
-            if source in frame.columns:
-                added[target] = frame[source].to_numpy(float) * factor
-        if f"inc_{k}" in frame.columns:
-            added[f"i_{k}_rad"] = np.radians(frame[f"inc_{k}"].to_numpy(float))
-    for name, values in added.items():
-        frame[name] = values
-    return frame
-
-
 class CharacterizationWriter(BufferedParquetWriter):
     """Buffers characterization records and writes one parquet per work unit.
 
@@ -155,7 +127,7 @@ class CharacterizationWriter(BufferedParquetWriter):
     def _table(self, rows):
         frame = pd.DataFrame.from_records(rows)
         joined = self._truths.iloc[frame["shard_row"].to_numpy()].reset_index(drop=True)
-        frame = to_analysis_schema(pd.concat([joined, frame], axis=1))
+        frame = pd.concat([joined, frame], axis=1)
         frame["gaia_source_id"] = frame["gaia_source_id"].astype("int64")
         return pa.Table.from_pandas(frame, preserve_index=False)
 
@@ -163,7 +135,7 @@ class CharacterizationWriter(BufferedParquetWriter):
 # ==========================================================================
 # The raw curves
 # ==========================================================================
-class PowerWriter:
+class PowerWriter(BufferedParquetWriter):
     """Buffers Delta-chi^2 curves and writes one parquet per work unit.
 
     One row per stored system: `gaia_source_id`, `shard_row`, and `power` as a
@@ -173,25 +145,19 @@ class PowerWriter:
 
     A `PowerWriter` with `mode="none"` is a no-op object, so the caller has no
     branch: it always constructs one and always calls `add`.
-
-    Deliberately NOT built on `shardio.BufferedParquetWriter`: the no-op mode
-    must not create the directory, and the fixed-size-list packing keeps two
-    parallel buffers. Both would need flags on the base that no other writer
-    wants.
     """
 
-    def __init__(self, path, n_periods, mode=None, decimate=None, dtype=None):
+    def __init__(self, path, n_periods, mode=None, dtype=None):
         self.mode = C.POWER_MODE if mode is None else mode
-        self.decimate = C.POWER_DECIMATE if decimate is None else int(decimate)
         self.dtype = np.dtype(C.POWER_DTYPE if dtype is None else dtype)
-        self.n_stored = int(np.ceil(n_periods / self.decimate))
-        self.path = Path(path)
-        self._tmp = self.path.with_suffix(".parquet.tmp")
-        self._writer = None
-        self._rows, self._ids = [], []
-        self.n_systems = 0
-        if self.mode != "none":
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.n_stored = int(n_periods)
+        super().__init__(path, C.POWER_FLUSH_EVERY, C.PARQUET_COMPRESSION,
+                         compression_level=C.PARQUET_COMPRESSION_LEVEL,
+                         mkdir=self.mode != "none", use_dictionary=False)
+
+    @property
+    def n_systems(self):
+        return self.n_rows
 
     def wants(self, gaia_source_ids):
         """Which of these systems this writer will store, as a boolean array."""
@@ -206,55 +172,29 @@ class PowerWriter:
     def add(self, gaia_source_id, shard_row, power):
         if self.mode == "none" or power is None:
             return
-        self._rows.append(np.asarray(power[::self.decimate], dtype=self.dtype))
-        self._ids.append((int(gaia_source_id), int(shard_row)))
-        self.n_systems += 1
-        if len(self._rows) >= C.POWER_FLUSH_EVERY:
-            self.flush()
+        super().add((int(gaia_source_id), int(shard_row),
+                     np.asarray(power, dtype=self.dtype)))
 
-    def flush(self):
-        if not self._rows:
-            return
-        flat = pa.array(np.concatenate(self._rows))
-        table = pa.table({
-            "gaia_source_id": pa.array([i for i, _ in self._ids], pa.int64()),
-            "shard_row": pa.array([r for _, r in self._ids], pa.int32()),
+    def _table(self, rows):
+        flat = pa.array(np.concatenate([power for _, _, power in rows]))
+        return pa.table({
+            "gaia_source_id": pa.array([i for i, _, _ in rows], pa.int64()),
+            "shard_row": pa.array([r for _, r, _ in rows], pa.int32()),
             "power": pa.FixedSizeListArray.from_arrays(flat, self.n_stored),
         })
-        if self._writer is None:
-            self._writer = pq.ParquetWriter(
-                self._tmp, table.schema, compression=C.PARQUET_COMPRESSION,
-                compression_level=C.PARQUET_COMPRESSION_LEVEL, use_dictionary=False)
-        self._writer.write_table(table)
-        self._rows, self._ids = [], []
-
-    def close(self):
-        self.flush()
-        if self._writer is not None:
-            self._writer.close()
-            self._tmp.replace(self.path)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
 
 
-def write_period_grid(periods, decimate=None, path=None):
+def write_period_grid(periods, path=None):
     """Write the trial periods every stored curve is aligned to, once per run.
 
-    Both the full grid and the stored (decimated) one, because the summary
-    columns were measured on the full grid and the curves are sampled on the
-    decimated one, and a reader needs to be able to tell which is which.
+    One grid: the summary columns and the stored curves are sampled on the same
+    trial periods, so a reader needs no index translation.
     """
-    decimate = C.POWER_DECIMATE if decimate is None else int(decimate)
     path = C.period_grid_path() if path is None else Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    stored = np.asarray(periods, float)[::decimate]
-    table = pa.table({"index": pa.array(np.arange(len(stored)), pa.int32()),
-                      "period_yr": pa.array(stored, pa.float64())})
+    grid = np.asarray(periods, float)
+    table = pa.table({"index": pa.array(np.arange(len(grid)), pa.int32()),
+                      "period_yr": pa.array(grid, pa.float64())})
     tmp = path.with_suffix(".parquet.tmp")
     pq.write_table(table, tmp, compression=C.PARQUET_COMPRESSION)
     tmp.replace(path)

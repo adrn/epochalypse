@@ -29,22 +29,6 @@ from . import config as C
 TWOPI = 2.0 * np.pi
 
 
-def target_dlog(p_min=None, p_max=None, n_periods=None):
-    """The coarsest log10-period spacing a segment is allowed, in dex.
-
-    Defaults to the spacing of the in-house baseline grid
-    (`run_periodograms.PERIODS`, `n_periods` log-uniform points over
-    [p_min, p_max]), so this search is at least as finely sampled in log-period
-    as the baseline *everywhere*. `config.TARGET_DLOG` overrides it outright.
-    """
-    if C.TARGET_DLOG is not None:
-        return float(C.TARGET_DLOG)
-    p_min = C.P_MIN if p_min is None else float(p_min)
-    p_max = C.P_MAX if p_max is None else float(p_max)
-    n = C.BASELINE_N_PERIODS if n_periods is None else int(n_periods)
-    return float(np.log10(p_max / p_min) / (n - 1))
-
-
 def frequency_segments(p_min=None, p_max=None, n_segments=None, dlog=None):
     """The `(nu0, dnu, nfreq)` grids to hand to `kepmodel.periodogram`.
 
@@ -56,7 +40,9 @@ def frequency_segments(p_min=None, p_max=None, n_segments=None, dlog=None):
     p_min = C.P_MIN if p_min is None else float(p_min)
     p_max = C.P_MAX if p_max is None else float(p_max)
     n_segments = C.N_SEGMENTS if n_segments is None else int(n_segments)
-    dlog = target_dlog(p_min, p_max) if dlog is None else float(dlog)
+    # ~688 trials per e-fold in period, the baseline density everywhere
+    dlog = (np.log10(p_max / p_min) / (C.BASELINE_N_PERIODS - 1)
+            if dlog is None else float(dlog))
     edges = np.exp(np.linspace(np.log(p_max), np.log(p_min), n_segments + 1))
     segments = []
     for p_hi, p_lo in zip(edges[:-1], edges[1:]):   # descending P -> ascending nu
@@ -90,4 +76,5 @@ def describe(segments):
             "n_periods": int(periods.size),
             "p_min_yr": float(periods[0]), "p_max_yr": float(periods[-1]),
             "dlog_min": float(dlog.min()), "dlog_max": float(dlog.max()),
-            "target_dlog": target_dlog()}
+            "target_dlog": float(np.log10(C.P_MAX / C.P_MIN)
+                                 / (C.BASELINE_N_PERIODS - 1))}
