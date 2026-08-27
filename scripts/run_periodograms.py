@@ -6,7 +6,7 @@ Usage:
 Writes one CSV per population to outputs/data/characterization_<population>.csv, with one row per
 system (periodogram summary + acceleration test + data-only detection/characterization flags +
 truth-based period recovery, joined to the injected-truth columns). See
-``epochalypse_fitting.characterize_population`` for the columns.
+``epochalypse.fitting.characterize_population`` for the columns.
 """
 import sys
 import time
@@ -14,20 +14,22 @@ from pathlib import Path
 
 import numpy as np
 
-import epochalypse_fitting as ef
+from epochalypse import fitting as ef
 
 # Trial-period grid: 0.01 yr .. the longest injected period in any population (3228 yr: the outer
 # companion of 2_companion_agnostic; period_1 alone reaches 2712 yr). The grid must bracket every
 # truth at BOTH ends, otherwise a system rails at a grid edge and "is the truth inside the
 # competitive region?" is unanswerable-by-construction rather than measured.
 #
-# The lower bound is set by the semi-major axis prior in sim_planets.ipynb (A_MIN_AU). At the
-# current A_MIN_AU = 0.1 AU the shortest injected period is 5 d (0.014 yr) for the lightest star in
-# the catalog and 16 d at the median 0.55 Msun, so 0.01 yr brackets the prior with margin. This is
-# not a cosmetic bound: sampling the prior shows 19% of draws fall below the old 0.3 yr floor and
-# 12% of those clear SNR_total >= 10 -- 16% of the whole high-SNR population. Left outside the
-# grid they would be scored "no significant peak" for the wrong reason. If A_MIN_AU changes again,
-# re-check against min(sqrt(A_MIN_AU**3 / mass_interp)) over outputs/data/stars.csv.
+# The lower bound is set by the innermost orbit the generator can inject. That is no longer the
+# flat semi-major axis floor: PLANET_PRIORS.a_min_au is 0.001 AU, but the binding limit is the
+# per-star Roche-lobe screen (the star must fit inside its own lobe), a > R*/ell(M*/Mp), which is
+# 1.2-2.6 R* depending on the mass ratio. Over outputs/data/stars.csv the tightest allowed orbit is
+# 0.001 AU and the shortest possible period is 8.4e-5 yr (44 minutes), median 0.088 d, so
+# P_MIN = 5e-5 yr brackets the prior with 1.7x margin. This is not a cosmetic bound: trials left
+# outside the grid are scored "no significant peak" for the wrong reason. If the sma floor or the
+# Roche screen changes, re-derive with
+#     min(sqrt(max(a_min, roche_lobe_min_separation(R*, M*, M_mars))**3 / mass_interp)).
 #
 # Beyond ~9x the DR4 baseline the orbit is under-sampled and a "period" is not a real constraint --
 # the signal is an astrometric acceleration, which the acceleration test carries. Those trials are
@@ -36,13 +38,16 @@ import epochalypse_fitting as ef
 # sampled by only ~90 DR4 transits over 5.5 yr, so expect those peaks to be heavily aliased against
 # the scan law: a narrow peak at 20 d is not the same evidence as a narrow peak at 3 yr.
 #
-# Density is held at ~684 trials per e-fold in period (6.32e-4 dex), unchanged across every revision
+# Density is held at ~688 trials per e-fold in period (6.32e-4 dex), unchanged across every revision
 # of these bounds, so width_dex (an absolute width in log-period) stays comparable with earlier runs
-# and the grid-convergence tests carry over. Cost is linear in the number of trials: 1.37x the
-# 0.3 yr grid. The look-elsewhere effect grows with the trial count, so the null thresholds MUST be
-# recalibrated on 0_companion (notebook Step 2.5 does this automatically from the new control run).
-P_MIN, P_MAX = 0.01, 3300.0
-PERIODS = ef.period_grid(P_MIN, P_MAX, 8739)
+# and the grid-convergence tests carry over. Cost is linear in the number of trials: 1.42x the
+# 0.01 yr grid. The look-elsewhere effect grows with the trial count, so the null thresholds MUST be
+# recalibrated on 0_companion (notebook Step 2.5 does this automatically from the new control run) --
+# the published Dchi2_orbit > 728 / Dchi2_accel > 76 were calibrated on the 8,739-trial grid and do
+# NOT carry over. Note also that a period of hours is sampled by ~90 DR4 transits spread over 5.5 yr,
+# so the short end of this grid is aliasing-dominated by construction.
+P_MIN, P_MAX = 5.0e-5, 3300.0
+PERIODS = ef.period_grid(P_MIN, P_MAX, 12383)
 OUT_DIR = ef.DATA_ROOT
 
 ALL_POPULATIONS = [

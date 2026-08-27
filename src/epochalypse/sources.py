@@ -11,8 +11,8 @@ This module replaces "load everything" with "look up one source":
     ScanLawStore   -- DR4 scan law, ~90 rows per star
 
 Both are backed by a memory-mapped Arrow/Parquet file plus a small index built
-once (`build_indices`) and shared read-only by every worker. Memory per worker
-is the index plus one star's rows, not the catalog.
+once (`build_indices`) and shared read-only by every rank. Memory per rank is
+the index plus one star's rows, not the catalog.
 
 The scan-law index stores (offset, length) per source id, which requires the
 file to be grouped by source id -- `build_indices` verifies this and reports the
@@ -20,11 +20,10 @@ offending ids rather than silently returning the wrong epochs.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
+
+from . import config as C
 
 
 def _read_arrow(path):
@@ -48,13 +47,13 @@ def _normalize_ids(array):
 # --------------------------------------------------------------------------
 # Index construction
 # --------------------------------------------------------------------------
-def build_indices(config, *, overwrite=False, verbose=True):
+def build_indices(*, overwrite=False, verbose=True):
     """Build the per-source indices for the stellar catalog and the scan law.
 
     Run once after stage 1. Cheap relative to a full generation and read-only
-    afterwards, so any number of workers can share it.
+    afterwards, so any number of ranks can share it.
     """
-    index_dir = config.paths.index_dir
+    index_dir = C.index_dir()
     index_dir.mkdir(parents=True, exist_ok=True)
 
     star_index = index_dir / "stars_index.parquet"
@@ -65,20 +64,19 @@ def build_indices(config, *, overwrite=False, verbose=True):
         return {"stars": star_index, "scanlaw": scan_index}
 
     # --- stellar catalog: id -> row number ---
-    stars = pd.read_csv(config.paths.stars_csv,
-                        dtype={"gaia_source_id": str, "source_id_dr2": str},
+    stars = pd.read_csv(C.stars_csv(), dtype={"gaia_source_id": str},
                         usecols=["gaia_source_id", "sig_AL"], low_memory=False)
     rows = np.arange(len(stars), dtype=np.int64)
-    if config.stars.require_sigma_al:
-        # A handful of high-RUWE binaries carry no per-CCD AL noise calibration.
-        # There is no noise model for them, so simulating one yields NaN epochs.
-        # They are excluded from the index, which is the source list every worker
-        # iterates -- so they can never reach a shard.
-        usable = np.isfinite(stars["sig_AL"].to_numpy(dtype=float))
-        if not usable.all():
-            print(f"  excluded {int((~usable).sum())} stars with no sig_AL "
-                  "(no noise model)")
-        stars, rows = stars[usable], rows[usable]
+
+    # A handful of high-RUWE binaries carry no per-CCD AL noise calibration.
+    # There is no noise model for them, so simulating one yields NaN epochs.
+    # They are excluded from the index, which is the source list every rank
+    # iterates -- so they can never reach a shard.
+    usable = np.isfinite(stars["sig_AL"].to_numpy(dtype=float))
+    if not usable.all():
+        print(f"  excluded {int((~usable).sum())} stars with no sig_AL (no noise model)")
+    stars, rows = stars[usable], rows[usable]
+
     ids = _normalize_ids(stars["gaia_source_id"].to_numpy())
     if pd.Series(ids).duplicated().any():
         raise ValueError("the stellar catalog has duplicate gaia_source_id values; "
@@ -89,7 +87,7 @@ def build_indices(config, *, overwrite=False, verbose=True):
         print(f"  stars index   : {len(ids):,} sources -> {star_index}")
 
     # --- scan law: id -> (offset, length) ---
-    table = _read_arrow(config.paths.scanlaw_dr4)
+    table = _read_arrow(C.SCANLAW_DR4)
     scan_ids = _normalize_ids(table.column("gaia_source_id").to_numpy())
     codes, uniques = pd.factorize(scan_ids)          # preserves order of appearance
     boundaries = np.flatnonzero(np.diff(codes)) + 1
@@ -105,7 +103,7 @@ def build_indices(config, *, overwrite=False, verbose=True):
     if repeated:
         raise ValueError(
             f"{len(repeated)} source ids appear in more than one block of "
-            f"{config.paths.scanlaw_dr4} (e.g. {repeated[:3]}); sort the scan law by "
+            f"{C.SCANLAW_DR4} (e.g. {repeated[:3]}); sort the scan law by "
             "gaia_source_id before indexing")
 
     pd.DataFrame({"gaia_source_id": uniques[codes[starts]],
@@ -115,13 +113,6 @@ def build_indices(config, *, overwrite=False, verbose=True):
     if verbose:
         print(f"  scanlaw index : {len(starts):,} sources, {len(codes):,} transits "
               f"-> {scan_index}")
-
-    (index_dir / "index_manifest.json").write_text(json.dumps({
-        "stars_csv": str(config.paths.stars_csv),
-        "scanlaw": str(config.paths.scanlaw_dr4),
-        "n_sources": int(len(ids)),
-        "n_transits": int(len(codes)),
-    }, indent=2))
     return {"stars": star_index, "scanlaw": scan_index}
 
 
@@ -131,21 +122,28 @@ def build_indices(config, *, overwrite=False, verbose=True):
 class SourceCatalog:
     """The parent stellar sample, addressable by Gaia source id."""
 
-    def __init__(self, config):
-        self.config = config
-        index = pd.read_parquet(config.paths.index_dir / "stars_index.parquet")
+    # stars.csv carries ~117 columns; these are the ones the simulator reads.
+    # Reading only these is what keeps a rank near 2 GB instead of 5.5 GB at 4M
+    # stars, which is what sets how many ranks fit on a node. A column added to
+    # the truth row must be added here too -- the failure is a loud KeyError.
+    COLUMNS = ("gaia_source_id", "source_id_dr2", "parallax", "pmra_dr3", "pmdec_dr3",
+               "mass_interp", "radius_interp", "sig_AL", "sig_cal", "sig_att_radec",
+               "astrometric_n_good_obs_al_dr3", "astrometric_matched_transits_dr3",
+               "astrometric_params_solved_dr3")
+
+    def __init__(self):
+        index = pd.read_parquet(C.index_dir() / "stars_index.parquet")
         self._row_of = dict(zip(index["gaia_source_id"], index["row"]))
         self._frame = None      # loaded lazily; see `_stars`
 
     @property
     def _stars(self):
-        # The stellar catalog is one row per star: 4M rows of ~100 columns is
-        # large but tractable once per worker, unlike the scan law. Loaded on
-        # first use so that listing ids costs nothing.
+        # One row per star, held once per rank -- unlike the scan law, which is
+        # memory-mapped. Loaded on first use so that listing ids costs nothing.
         if self._frame is None:
             self._frame = pd.read_csv(
-                self.config.paths.stars_csv,
-                dtype={"gaia_source_id": str, "source_id_dr2": str}, low_memory=False)
+                C.stars_csv(), low_memory=False, usecols=list(self.COLUMNS),
+                dtype={"gaia_source_id": str, "source_id_dr2": str})
             for column in ("gaia_source_id", "source_id_dr2"):
                 self._frame[column] = _normalize_ids(self._frame[column].to_numpy())
         return self._frame
@@ -157,42 +155,34 @@ class SourceCatalog:
         return len(self._row_of)
 
     def ids(self):
-        """Every source id, in catalog order."""
+        """Every source id, in catalog order. This is what ranks slice."""
         return list(self._row_of)
 
     def get(self, gaia_source_id):
         """One star's row as a Series. Raises KeyError if the id is unknown."""
         key = str(gaia_source_id)
         if key not in self._row_of:
-            raise KeyError(f"gaia_source_id {key} is not in {self.config.paths.stars_csv}")
+            raise KeyError(f"gaia_source_id {key} is not in {C.stars_csv()}")
         return self._stars.iloc[self._row_of[key]]
 
 
 class ScanLawStore:
     """The DR4 scan law, addressable by Gaia source id.
 
-    The Arrow table is memory-mapped, so a worker touches only the pages for the
+    The Arrow table is memory-mapped, so a rank touches only the pages for the
     sources it actually simulates.
     """
 
     COLUMNS = ("obs_time_tcb_jd", "scan_angle_rad", "parallax_factor_al", "fov")
 
-    def __init__(self, config):
-        self.config = config
-        index = pd.read_parquet(config.paths.index_dir / "scanlaw_index.parquet")
+    def __init__(self):
+        index = pd.read_parquet(C.index_dir() / "scanlaw_index.parquet")
         self._span_of = dict(zip(index["gaia_source_id"],
                                  zip(index["offset"], index["length"])))
-        self._table = _read_arrow(config.paths.scanlaw_dr4)
+        self._table = _read_arrow(C.SCANLAW_DR4)
 
     def __contains__(self, gaia_source_id):
         return str(gaia_source_id) in self._span_of
-
-    def n_transits(self, gaia_source_id):
-        """Number of FoV transits, without materializing the rows."""
-        key = str(gaia_source_id)
-        if key not in self._span_of:
-            return 0
-        return int(self._span_of[key][1])
 
     def get(self, gaia_source_id):
         """This source's transits as a DataFrame, sorted by observation time."""
@@ -206,20 +196,24 @@ class ScanLawStore:
 
 
 # --------------------------------------------------------------------------
-# Shard assignment
+# The high-SNR view over a generated population
 # --------------------------------------------------------------------------
-def shard_of(gaia_source_id, n_shards):
-    """Which shard a source belongs to: a pure function of its id.
+def select_high_snr(frame, fraction=None):
+    """The top `fraction` of systems by detectability.
 
-    blake2s rather than hash() so the partition is stable across processes,
-    machines, and Python runs.
+    A system's detectability is the largest SNR_tot over its companions, matching
+    how the old generated high-SNR populations required *every* companion to be
+    detectable only in the sense of being drawn from the same threshold -- here
+    the ranking is per system and the threshold is a quantile, so the size of the
+    selection is fixed and the cut value is whatever the data says it is.
     """
-    import hashlib
-
-    digest = hashlib.blake2s(str(gaia_source_id).encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "little") % int(n_shards)
-
-
-def select_shard(gaia_source_ids, shard, n_shards):
-    """The subset of ids assigned to `shard`, in the order given."""
-    return [sid for sid in gaia_source_ids if shard_of(sid, n_shards) == shard]
+    fraction = C.HIGH_SNR_FRACTION if fraction is None else fraction
+    columns = [c for c in ("snr_total_1", "snr_total_2") if c in frame.columns]
+    if not columns:
+        raise KeyError("no snr_total_* columns to rank on")
+    with np.errstate(invalid="ignore"):
+        score = np.nanmax(frame[columns].to_numpy(float), axis=1)
+    frame = frame.assign(_snr_rank=score)
+    n_keep = max(1, int(round(fraction * len(frame))))
+    selected = frame.nlargest(n_keep, "_snr_rank").drop(columns="_snr_rank")
+    return selected.sort_values("gaia_source_id").reset_index(drop=True)

@@ -28,7 +28,7 @@ import pandas as pd
 # --------------------------------------------------------------------------------------
 # Physical and mission constants live in one place, derived from astropy, and are
 # re-exported here so existing callers (`ef.MJUP_TO_MSUN`, ...) keep working.
-from epochalypse_constants import (  # noqa: E402,F401
+from .constants import (  # noqa: F401
     DAYS_PER_YEAR,
     DR4_BASELINE_YEARS,
     GAIA_EPOCH_TCB_JD,
@@ -41,7 +41,7 @@ from epochalypse_constants import (  # noqa: E402,F401
 TWOPI = 2.0 * np.pi
 ECC_MAX = 0.99
 
-# Prior bounds for the full-sampler (NUTS) period parameter in epochalypse_validation. They must
+# Prior bounds for the full-sampler (NUTS) period parameter. They must
 # bracket the injected prior, which sim_planets.ipynb sets through A_MIN_AU/A_MAX_AU: at
 # A_MIN_AU = 0.1 AU the shortest injected period is 5 d = 0.014 yr.
 PERIOD_MIN_YEARS = 0.01

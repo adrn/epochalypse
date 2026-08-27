@@ -1,0 +1,47 @@
+[project]
+name = "epochalypse"
+version = "0.1.0"
+description = "Simulated Gaia DR4 epoch astrometry for ~4 million stars"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",     # parquet shards + memory-mapped Arrow lookups
+    "astropy",     # all physical constants
+    "jax",         # pulls in jaxlib
+    "jaxoplanet",  # the Keplerian reflex model
+    "matplotlib",
+    "healpy",      # the sky-map figure only
+]
+
+[project.optional-dependencies]
+# Kept out of the default set because mpi4py must be built against the MPI that
+# mpirun/srun actually use -- a wheel built against a different one fails across
+# nodes. See the cluster install in the README. Without mpi4py, run_mpi.py runs
+# as a single rank, which is what makes it usable on a laptop.
+mpi = ["mpi4py"]
+
+# epochalypse.fitting and scripts/run_periodograms.py, which still target the
+# serial catalog's layout and do not run against this catalog yet.
+analysis = ["scipy", "h5py"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/epochalypse"]
+
+# The sdist would otherwise carry data/ (the committed samples, ~20 MB) and the
+# old notebooks. Nothing needs them to build, and the real inputs are 12 GB of
+# gitignored Arrow that must never end up in an archive.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/epochalypse", "scripts", "tests",
+                "README.md", "PIPELINE.md"]
+
+# No [project.scripts]: the four entry points live in scripts/, outside the
+# package, and console scripts would mean moving them back inside it. For an
+# MPI launch `mpirun python scripts/run_mpi.py` also says more about what is
+# running than a generated shim would.
