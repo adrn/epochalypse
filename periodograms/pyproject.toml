@@ -1,0 +1,36 @@
+[project]
+name = "epochalypse-periodograms"
+version = "0.1.0"
+description = "kepmodel astrometric periodograms over the whole epochalypse DR4 catalog"
+readme = "PERIODOGRAMS.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyarrow",     # the parquet shards, in and out
+    "astropy",     # all physical constants
+    "kepmodel",    # J.-B. Delisle's astrometric periodogram -- the period search
+    "spleaf",      # its S+LEAF noise terms (kepmodel dependency, named for clarity)
+]
+
+[project.optional-dependencies]
+# Kept out of the default set because mpi4py must be built against the MPI that
+# mpirun/srun actually use -- a wheel built against a different one fails across
+# nodes. See PERIODOGRAMS.md. Without mpi4py, run_mpi.py runs as a single rank,
+# which is what makes it usable on a laptop.
+mpi = ["mpi4py"]
+
+# `periodogram_source.py --plot` only. Nothing in the production path draws.
+figures = ["matplotlib"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/epochalypse_periodograms"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/epochalypse_periodograms", "scripts", "tests", "mpi",
+                "PERIODOGRAMS.md"]
