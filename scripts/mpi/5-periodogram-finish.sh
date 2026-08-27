@@ -3,8 +3,6 @@
 #SBATCH -o logs/epochalypse-pgram-finish.o
 #SBATCH -e logs/epochalypse-pgram-finish.e
 #SBATCH -N 1
-#SBATCH -c 1
-#SBATCH --mem=120G
 #SBATCH -t 2:00:00
 #SBATCH -p cca
 #SBATCH --constraint=rome
@@ -15,11 +13,10 @@
 
 cd /mnt/home/apricewhelan/work/epochalypse
 source .venv/bin/activate
+source scripts/mpi/env.sh
 
 date
-CATALOG_ROOT=/mnt/ceph/users/apricewhelan/project-outputs/epochalypse
-PGRAM_ROOT=$CATALOG_ROOT/periodograms
 
 python scripts/characterize_finish.py --stages calibrate census merge \
-    --catalog-root $CATALOG_ROOT --output-root $PGRAM_ROOT
+    --catalog-root $OUT_ROOT --output-root $PGRAM_ROOT
 date
