@@ -11,7 +11,7 @@ that what comes back out of the parquet is what went in.
 
 Everything here is an assertion about something the run would otherwise get
 silently wrong: a period axis that does not line up with the stored curves, a
-part split that drops or duplicates systems, a subsample that is not the paper's.
+part split that drops or duplicates systems.
 """
 
 from __future__ import annotations
@@ -150,28 +150,6 @@ def test_periodogram():
         "width metric matches the baseline on a uniform log grid",
         abs(width - baseline_width) < 2 * np.diff(logp).max(),
         f"{width:.5f} vs {baseline_width:.5f} dex",
-    )
-
-
-def test_subsample():
-    # The cutoff is a quantile of the parent sample; a single id can be tested
-    # against it with no table, which is the property the ranks depend on.
-    ids = np.array([5484066448309985152, 424187226612669312, 1, 2, 3], dtype="int64")
-    ranks = writers.source_id_ranks(ids)
-    keep = writers.in_paper_subsample(ids)
-    check(
-        "rank threshold agrees with the rank values",
-        bool((keep == (ranks <= np.uint64(C.SUBSAMPLE_RANK_CUTOFF))).all()),
-    )
-    check(
-        "the cutoff is the SIZE/PARENT quantile it claims to be",
-        abs(
-            C.SUBSAMPLE_RANK_CUTOFF / 2.0**64
-            - C.SUBSAMPLE_SIZE / C.SUBSAMPLE_PARENT_SIZE
-        )
-        < 1e-4,
-        f"{C.SUBSAMPLE_RANK_CUTOFF / 2.0**64:.6f} vs "
-        f"{C.SUBSAMPLE_SIZE / C.SUBSAMPLE_PARENT_SIZE:.6f}",
     )
 
 
@@ -368,38 +346,6 @@ def test_shards(population="1_companion", n_systems=12):
         )
     finally:
         shutil.rmtree(out, ignore_errors=True)
-
-
-def test_subsample_cutoff_matches_the_parent_sample():
-    """`SUBSAMPLE_RANK_CUTOFF` is a hash quantile pinned to one parent sample.
-
-    It silently selects the wrong subsample if the sample, the seed, or the
-    subsample size changes -- and the maintenance stage that used to re-derive
-    it is gone. This is that check, where a real parent sample exists.
-    """
-    if CATALOG_ROOT is None:
-        print("  (skipped -- pass --catalog-root to run this)")
-        return
-    C.set_catalog_root(CATALOG_ROOT)
-    merged = C.catalog_data_dir() / "injected_solutions_0_companion.parquet"
-    if not merged.exists():
-        print(f"  (skipped -- {merged.name} not in this catalog)")
-        return
-    ids = pd.read_parquet(merged, columns=["gaia_source_id"])[
-        "gaia_source_id"
-    ].to_numpy()
-    ranks = np.sort(writers.source_id_ranks(ids))
-    cutoff = int(ranks[C.SUBSAMPLE_SIZE - 1])
-    check(
-        "parent sample size matches config",
-        len(ids) == C.SUBSAMPLE_PARENT_SIZE,
-        f"{len(ids):,} vs {C.SUBSAMPLE_PARENT_SIZE:,}",
-    )
-    check(
-        "SUBSAMPLE_RANK_CUTOFF is still the right quantile",
-        cutoff == C.SUBSAMPLE_RANK_CUTOFF,
-        f"{cutoff} vs {C.SUBSAMPLE_RANK_CUTOFF}",
-    )
 
 
 def main(argv=None):

@@ -17,6 +17,12 @@ source .venv/bin/activate
 export OMP_NUM_THREADS=1
 export JAX_PLATFORMS=cpu          # skip the GPU probe on CPU nodes
 
+# Inputs and outputs both live on ceph: the delivered dataset is ~12 GB and the
+# catalog is ~50 GB, neither of which belongs in a home directory.
+DATA_ROOT=/mnt/ceph/users/apricewhelan/project-data/epochalypse
+OUT_ROOT=/mnt/ceph/users/apricewhelan/project-outputs/epochalypse
+
 date
-mpirun python scripts/simulate_mpi.py --skip-existing
+mpirun python scripts/simulate_mpi.py --skip-existing \
+    --data-root $DATA_ROOT --output-root $OUT_ROOT
 date

@@ -108,9 +108,9 @@ def build_star_catalog(*, overwrite=True) -> pd.DataFrame:
             dtype={"gaia_source_id": str, "source_id_dr2": str},
         )
 
-    with pa.memory_map(str(C.G23H_SAMPLE), "r") as source:
+    with pa.memory_map(str(C.g23h_sample()), "r") as source:
         sources = ipc.open_file(source).read_all().to_pandas()
-    print(f"  loaded {len(sources):,} stars from {C.G23H_SAMPLE}")
+    print(f"  loaded {len(sources):,} stars from {C.g23h_sample()}")
 
     stars = add_mass_radius_from_pecaut(sources)
 

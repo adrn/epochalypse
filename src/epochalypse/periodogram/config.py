@@ -216,33 +216,16 @@ PARQUET_COMPRESSION_LEVEL = 3
 CHARS_FLUSH_EVERY = 5000  # systems buffered before a characterization row-group flush
 POWER_FLUSH_EVERY = 500  # ~27 MB of float32 power per row group
 
-# What to keep of the raw Delta-chi^2 curves. A curve is 53 kB per system after
-# zstd, so "all" is ~915 GB over the full catalog -- ten times the size of the
-# catalog it was computed from, which is why it is not the default. "subsample"
-# keeps the paper's 10,000 stars per population, 1.6 GB, and any other curve can
-# be regenerated from its epochs in 0.34 s (see `periodogram_source.py`).
-# POWER_DTYPE shrinks "all" without changing which systems are
-# stored, if it is ever wanted; see PERIODOGRAMS.md.
-POWER_MODE = "subsample"  # "all" | "subsample" | "none"
+# Whether to keep the raw Delta-chi^2 curves. A curve is 16,641 float32 =
+# 53 kB per system after zstd, so keeping every one is ~915 GB over the three
+# populations -- ten times the catalog it was computed from, so it wants
+# --output-root on ceph rather than the repo tree. Stored for every system on
+# purpose: subsampling is an analysis choice, and a curve that was never
+# written can only be recovered by recomputing it.
+#
+# POWER_DTYPE = "float16" halves the total if that is ever needed.
+POWER_MODE = "all"  # "all" | "none"
 POWER_DTYPE = "float32"  # "float32" | "float16"
-
-# The paper's shared down-selection, for POWER_MODE == "subsample": the rule in
-# `pipeline/subsample.py`, keyed on gaia_source_id, which is what makes the same
-# 10,000 stars appear in every figure drawn from any table in the catalog.
-SUBSAMPLE_SIZE = 10_000
-SUBSAMPLE_SEED = 20260824
-
-# `subsample_frame` selects the SIZE smallest blake2s ranks, which a rank
-# holding one shard cannot evaluate -- it sees 0.3% of the parent and has no way
-# to know where the quantile falls. So the quantile is written down instead: the
-# 10,000th smallest rank over the 500 pc parent sample's 5,724,586 source ids at
-# seed 20260824. Comparing against it reproduces `subsample_frame` EXACTLY,
-# system by system, with no communication between ranks. Re-derive it with
-# `python scripts/finish.py --stages subsample-cutoff` if the parent sample,
-# the seed, or the size ever changes; `tests/test_periodograms.py` checks it
-# against the shipped `subsample_10000_seed20260824.parquet`.
-SUBSAMPLE_PARENT_SIZE = 5_724_586
-SUBSAMPLE_RANK_CUTOFF = 32256280498693495  # inclusive upper bound on the rank
 
 # ==========================================================================
 # Columns carried through from the truth tables

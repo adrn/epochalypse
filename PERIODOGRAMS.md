@@ -92,10 +92,11 @@ run=$(sbatch --parsable mpi/1-run.sh)
 sbatch --dependency=afterok:$run mpi/2-finish.sh
 ```
 
-Both `cd` to `/mnt/home/apricewhelan/work/epochalypse/periodograms` and
-`source .venv/bin/activate`, following the generator's `mpi/*.sh` — the same
-path, plus this subdirectory. Neither passes `--catalog-root` or
-`--output-root`, because the defaults (`<repo>/outputs` for the shards,
+Both follow the generator's `mpi/*.sh`: `cd` to the checkout,
+`source .venv/bin/activate`, and set their roots at the top. Both pass
+`--catalog-root` and `--output-root`, because at ~915 GB the curves belong on
+scratch rather than in the repo tree (the defaults are `<repo>/outputs` for the
+shards,
 `<repo>/outputs/periodograms` for the results) are the generator's own layout.
 Run `uv sync` once before submitting; the scripts activate `.venv` and call
 `python` rather than using `uv run`, since under `mpirun` every rank would
@@ -173,25 +174,31 @@ compression buys only ~20%).
 
 | `--power` | what is stored | all three populations |
 | --- | --- | --- |
-| `subsample` | the paper's 10,000-star sample per population | **~1.6 GB** (default) |
-| `all` | every system | ~915 GB |
+| `all` | every system (the default) | ~915 GB |
 | `none` | nothing | 0 |
 
-**`subsample` is the default, and `all` is not recommended.** 915 GB is roughly
-ten times the size of the catalog it was computed from, and the thing it buys is
-narrow: a curve costs 0.34 s to regenerate from its epochs and 53 kB to keep, so
-storing 17 M of them only pays if you intend to *re-analyse* the curves in bulk
-— stacking them, refitting peaks, testing a different width metric — without
-another 2,400 core-hours. Drawing a handful does not need it:
-`scripts/periodogram_source.py` regenerates any system's curve on demand.
+**`all` is the default, and 915 GB needs somewhere to go.** That is roughly ten
+times the catalog it was computed from, so point `--output-root` at ceph rather
+than the repo tree:
 
-If `all` is ever wanted, two knobs shrink it without changing *which* systems are
-kept (`config.POWER_DECIMATE`, `config.POWER_DTYPE`):
+```
+--output-root $OUT_ROOT/periodograms
+```
+
+Storing every curve is deliberate. Which curves are interesting is an analysis
+question — stacking them, refitting peaks, testing a different width metric —
+and subsampling at write time answers it once, permanently, for whoever comes
+next. A curve not written back can only be recovered by recomputing it, and
+recomputing the catalog is ~2,400 core-hours. Subsample in analysis instead,
+where the choice is cheap and reversible. (For a single system,
+`scripts/periodogram_source.py` regenerates a curve in 0.34 s regardless.)
+
+`config.POWER_DTYPE` halves the total without changing *which* systems are
+kept:
 
 | | float32 | float16 |
 | --- | --- | --- |
 | full grid | 915 GB | ~460 GB |
-| decimate 4 | ~230 GB | ~115 GB |
 
 Decimation is safer than it looks: **every summary statistic the classification
 depends on — `width_dex`, `top_power`, `best_period`, `period_k_in_bound` — is
@@ -335,9 +342,9 @@ Then the existing figure stack takes over unchanged — `epochalypse_figures.joi
 `cf.SCHEME_3`, `cf.apply_calibration` — because the column names are the ones it
 already reads. The one thing to reconsider at 5.7 M rows is the scatter: a
 rasterized 5.7 M-point panel is a large PDF and mostly overplotted ink, so the
-paper's 10,000-star subsample (`writers.in_paper_subsample`, the same rule keyed
-on `gaia_source_id`) is probably still what gets *drawn*, with the full table
-behind every number in the caption.
+drawn panel probably wants a subsample of a few thousand, with the full table
+behind every number in the caption. That is an analysis-side choice now -- the
+write path stores every system, so pick the rule where the figure is made.
 
 For the example-periodogram figure, `epochalypse_figures.examples` takes a
 `periodogram(t, psi, pf, y, yerr) -> (periods, power)` callable. Recompute them -- nine curves, three seconds:

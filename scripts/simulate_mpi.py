@@ -109,6 +109,11 @@ def main(argv=None):
         default=list(C.POPULATIONS),
     )
     parser.add_argument(
+        "--data-root",
+        type=Path,
+        help="read the delivered inputs from here instead of <repo>/data",
+    )
+    parser.add_argument(
         "--output-root", type=Path, help="write shards here instead of <repo>/outputs"
     )
     parser.add_argument(
@@ -123,6 +128,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     comm, rank, size = mpi.mpi_context()
+    if args.data_root:
+        C.set_data_root(args.data_root)
     if args.output_root:
         C.set_output_root(args.output_root)
 

@@ -8,18 +8,21 @@ always.
 
 **The raw periodograms** are one Delta-chi^2 curve per system, 16,641 float32 =
 54 kB after zstd, which is 920 GB over the whole catalog. That is the honest
-number and `POWER_MODE` is how it is managed:
+number and `POWER_MODE` is the on/off switch:
 
 | mode | what is stored | full catalog |
 | --- | --- | --- |
-| `all` | every system | ~920 GB |
-| `subsample` | the paper's 10,000-star sample per population | ~1.6 GB |
+| `all` | every system (the default) | ~920 GB |
 | `none` | nothing | 0 |
 
-`POWER_DTYPE` shrinks it without changing *which* systems
-are kept: decimating by 4 and storing float16 is ~115 GB and still a perfectly
-readable figure, because every summary statistic the classification depends on
-(`width_dex`, `top_power`, `best_period`) was computed on the full-resolution
+Every system, on purpose: which curves are interesting is an analysis choice,
+and one that was never written can only be recovered by recomputing it. At
+~920 GB this wants `--output-root` on ceph, not the repo tree.
+
+`POWER_DTYPE = "float16"` halves it without changing *which* systems are kept,
+and is still a perfectly readable figure, because every summary statistic the
+classification depends on (`width_dex`, `top_power`, `best_period`) was
+computed on the full-resolution
 float64 curve before anything was thrown away. Decimation is a display choice,
 not a measurement one.
 
@@ -34,7 +37,6 @@ one that looks complete. That is what makes `--skip-existing` trustworthy.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -49,45 +51,6 @@ from . import config as C
 # ==========================================================================
 # Which systems get a stored curve
 # ==========================================================================
-def source_id_ranks(gaia_source_ids, seed=None):
-    """A uniform 64-bit rank per source id: `blake2s(f"{seed}:{id}")`.
-
-    `pipeline/subsample.py`, verbatim -- including hashing the id through its
-    decimal string, so the rank does not depend on whether the column arrived
-    as int64, uint64 or object, and including the little-endian read, which is
-    not a free choice: the other byte order gives a different sample.
-    """
-    seed = C.SUBSAMPLE_SEED if seed is None else int(seed)
-    prefix = f"{int(seed)}:".encode("utf-8")
-    ids = np.asarray(gaia_source_ids)
-    return np.fromiter(
-        (
-            int.from_bytes(
-                hashlib.blake2s(
-                    prefix + str(int(i)).encode("utf-8"), digest_size=8
-                ).digest(),
-                "little",
-            )
-            for i in ids
-        ),
-        dtype=np.uint64,
-        count=len(ids),
-    )
-
-
-def in_paper_subsample(gaia_source_ids, seed=None, cutoff=None):
-    """The shared 10,000-star down-selection, decided one source id at a time.
-
-    `subsample_frame` takes the `SUBSAMPLE_SIZE` smallest ranks over the parent
-    table, which a rank holding a single shard cannot evaluate. Comparing
-    against the precomputed quantile `config.SUBSAMPLE_RANK_CUTOFF` gives the
-    identical set -- not an approximation of it -- with no communication
-    between ranks and no read of the merged truth table.
-    """
-    cutoff = C.SUBSAMPLE_RANK_CUTOFF if cutoff is None else int(cutoff)
-    return source_id_ranks(gaia_source_ids, seed) <= np.uint64(cutoff)
-
-
 # ==========================================================================
 # The characterization table
 # ==========================================================================
@@ -176,15 +139,12 @@ class PowerWriter(BufferedParquetWriter):
     def n_systems(self):
         return self.n_rows
 
-    def wants(self, gaia_source_ids):
-        """Which of these systems this writer will store, as a boolean array."""
-        if self.mode == "none":
-            return np.zeros(len(gaia_source_ids), bool)
-        if self.mode == "all":
-            return np.ones(len(gaia_source_ids), bool)
-        if self.mode == "subsample":
-            return in_paper_subsample(gaia_source_ids)
-        raise ValueError(f"unknown POWER_MODE {self.mode!r}")
+    @property
+    def stores(self):
+        """Whether curves are kept at all -- every system, or none."""
+        if self.mode not in ("all", "none"):
+            raise ValueError(f"unknown POWER_MODE {self.mode!r}")
+        return self.mode == "all"
 
     def add(self, gaia_source_id, shard_row, power):
         if self.mode == "none" or power is None:

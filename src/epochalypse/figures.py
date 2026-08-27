@@ -577,7 +577,7 @@ def plot_population_schematic():
         )
 
     # ---- counts, straight from the inputs and the generated catalogs ----
-    with pa.memory_map(str(C.G23H_SAMPLE), "r") as handle:
+    with pa.memory_map(str(C.g23h_sample()), "r") as handle:
         n_g23h = ipc.open_file(handle).read_all().num_rows
     stars = pd.read_csv(C.stars_csv(), usecols=["sig_AL"])
     n_after_pecaut = len(stars)

@@ -44,13 +44,20 @@ def star(source_id, *, mass=0.55, radius=0.52):
     )
 
 
-def test_isolation():
-    """Every path the pipeline touches must live under the checkout."""
+def test_defaults_resolve_inside_the_checkout():
+    """With nothing configured, every path lands in the checkout.
+
+    `config.ROOT` is found by walking up from `__file__`, so a wrong answer here
+    is silent. The delivered inputs and the outputs are both relocatable now
+    (`--data-root`, `--output-root`) -- this pins the DEFAULTS, which is what a
+    fresh clone and the smoke test rely on.
+    """
     paths = [
         C.ROOT,
-        C.DATA_IN,
-        C.G23H_SAMPLE,
-        C.SCANLAW_DR4,
+        C.DATA_ROOT,
+        C.REFERENCE_DIR,
+        C.g23h_sample(),
+        C.scanlaw_dr4(),
         C.PECAUT_MAMAJEK,
         C.GOST_FOV_MAP,
         C.OUTPUT_ROOT,
@@ -61,8 +68,35 @@ def test_isolation():
     ]
     for path in paths:
         assert REPO in Path(path).parents or Path(path) == REPO, (
-            f"{path} escapes {REPO} -- inputs and outputs must stay in the checkout"
+            f"{path} escapes {REPO} -- the defaults must stay in the checkout"
         )
+
+
+def test_roots_are_relocatable():
+    """`--data-root` and `--output-root` move what they claim to, and no more.
+
+    The reference data must NOT follow the data root: it is committed, and the
+    tests and a fresh clone depend on finding it in the checkout.
+    """
+    data_before, out_before = C.DATA_ROOT, C.OUTPUT_ROOT
+    try:
+        C.set_data_root("/tmp/ceph-data")
+        C.set_output_root("/tmp/ceph-out")
+
+        assert str(C.g23h_sample()).startswith("/private/tmp/ceph-data") or str(
+            C.g23h_sample()
+        ).startswith("/tmp/ceph-data"), C.g23h_sample()
+        assert C.scanlaw_dr4().parent == C.g23h_sample().parent
+        assert C.stars_csv().is_relative_to(C.OUTPUT_ROOT)
+        assert C.shard_epochs("1_companion", 0, 1).is_relative_to(C.OUTPUT_ROOT)
+
+        # reference data stays put
+        assert C.PECAUT_MAMAJEK.is_relative_to(REPO)
+        assert C.GOST_FOV_MAP.is_relative_to(REPO)
+        assert C.PECAUT_MAMAJEK.exists() and C.GOST_FOV_MAP.exists()
+    finally:
+        C.set_data_root(data_before)
+        C.set_output_root(out_before)
 
 
 def test_seeding():

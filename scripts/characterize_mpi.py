@@ -88,9 +88,6 @@ def write_manifest(segments, args, size):
         "power": {
             "mode": args.power or C.POWER_MODE,
             "dtype": C.POWER_DTYPE,
-            "subsample_size": C.SUBSAMPLE_SIZE,
-            "subsample_seed": C.SUBSAMPLE_SEED,
-            "subsample_rank_cutoff": C.SUBSAMPLE_RANK_CUTOFF,
         },
         "high_snr_min": C.HIGH_SNR_MIN,
         "target_fp": C.TARGET_FP,
@@ -127,9 +124,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--power",
-        choices=("all", "subsample", "none"),
+        choices=("all", "none"),
         default=None,
-        help=f"which systems keep a raw curve (default {C.POWER_MODE})",
+        help=f"keep the raw Delta-chi^2 curves (default {C.POWER_MODE})",
     )
     parser.add_argument(
         "--limit", type=int, help="cap systems per unit (smoke tests only)"

@@ -13,6 +13,7 @@ id), so what this prints is exactly what the shard holds.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from epochalypse import astrometry as astro
 from epochalypse import config as C
@@ -27,7 +28,21 @@ def main(argv=None):
     parser.add_argument(
         "--population", nargs="+", default=["1_companion"], choices=list(C.POPULATIONS)
     )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        help="read the delivered inputs from here instead of <repo>/data",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        help="read stars.csv and the indices from here instead of <repo>/outputs",
+    )
     args = parser.parse_args(argv)
+    if args.data_root:
+        C.set_data_root(args.data_root)
+    if args.output_root:
+        C.set_output_root(args.output_root)
 
     catalog, scanlaw = SourceCatalog(), ScanLawStore()
     if args.gaia_id not in catalog:

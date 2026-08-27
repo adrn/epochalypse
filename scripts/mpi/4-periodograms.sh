@@ -23,9 +23,12 @@ export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-# Defaults are <repo>/outputs for the catalog and <repo>/outputs/periodograms
-# for the results. --power all is ~915 GB and belongs on ceph via --output-root.
+# --power all is the default and is ~915 GB over the three populations, so both
+# roots are on ceph: the catalog it reads and the curves it writes.
+CATALOG_ROOT=/mnt/ceph/users/apricewhelan/project-outputs/epochalypse
+PGRAM_ROOT=$CATALOG_ROOT/periodograms
 
 date
-mpirun python scripts/characterize_mpi.py --skip-existing
+mpirun python scripts/characterize_mpi.py --skip-existing \
+    --catalog-root $CATALOG_ROOT --output-root $PGRAM_ROOT
 date

@@ -140,14 +140,21 @@ def main(argv=None):
         help="rebuild stars.csv / the indices instead of reusing them",
     )
     parser.add_argument(
+        "--data-root",
+        type=Path,
+        help="read the delivered inputs from here instead of <repo>/data",
+    )
+    parser.add_argument(
         "--output-root", type=Path, help="write products here instead of <repo>/outputs"
     )
     args = parser.parse_args(argv)
 
+    if args.data_root:
+        C.set_data_root(args.data_root)
     if args.output_root:
         C.set_output_root(args.output_root)
 
-    print(f"inputs      : {C.DATA_IN}")
+    print(f"data root   : {C.DATA_ROOT}")
     print(f"outputs     : {C.OUTPUT_ROOT}")
     print(f"stages      : {', '.join(args.stages)}")
     print(f"populations : {', '.join(args.populations)}")
@@ -156,9 +163,16 @@ def main(argv=None):
         "  (keyed on gaia_source_id)"
     )
 
-    missing = [p for p in (C.G23H_SAMPLE, C.PECAUT_MAMAJEK) if not p.exists()]
-    if "index" in args.stages and not C.SCANLAW_DR4.exists():
-        missing.append(C.SCANLAW_DR4)
+    # Per stage, so `merge select` needs no dataset at all -- it reads only what
+    # the simulation wrote. Asking for 12 GB of inputs a stage never opens is
+    # how you end up unable to re-run figures on a node without --data-root.
+    needs = {
+        "stars": (C.g23h_sample, lambda: C.PECAUT_MAMAJEK),
+        "index": (C.scanlaw_dr4,),
+        "figures": (C.g23h_sample, lambda: C.GOST_FOV_MAP),
+    }
+    wanted = {get() for stage in args.stages for get in needs.get(stage, ())}
+    missing = sorted(p for p in wanted if not p.exists())
     if missing:
         raise SystemExit(
             "missing input files:\n  " + "\n  ".join(str(p) for p in missing)

@@ -63,10 +63,6 @@ def run_unit(
     failures = []
     with ShardReader(population, shard, n_shards) as reader:
         power = PowerWriter(power_path, len(periods), mode=power_mode)
-        # `wants` is evaluated for the whole shard at once: the subsample mode
-        # is a blake2s per id and doing it per system inside the loop would put
-        # a hash in the hot path for no reason.
-        wanted = power.wants(reader.truths["gaia_source_id"].to_numpy())
         n_unit = reader.n_systems(part, n_parts)
 
         with (
@@ -89,7 +85,7 @@ def run_unit(
                         yerr,
                         truth=truth,
                         segments=segments,
-                        want_power=bool(wanted[index]),
+                        want_power=power.stores,
                     )
                 except Exception as error:
                     failures.append(

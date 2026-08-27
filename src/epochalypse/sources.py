@@ -99,7 +99,7 @@ def build_indices(*, overwrite=False, verbose=True):
         print(f"  stars index   : {len(ids):,} sources -> {star_index}")
 
     # --- scan law: id -> (offset, length) ---
-    table = _read_arrow(C.SCANLAW_DR4)
+    table = _read_arrow(C.scanlaw_dr4())
     scan_ids = _normalize_ids(table.column("gaia_source_id").to_numpy())
     codes, uniques = pd.factorize(scan_ids)  # preserves order of appearance
     boundaries = np.flatnonzero(np.diff(codes)) + 1
@@ -115,7 +115,7 @@ def build_indices(*, overwrite=False, verbose=True):
     if repeated:
         raise ValueError(
             f"{len(repeated)} source ids appear in more than one block of "
-            f"{C.SCANLAW_DR4} (e.g. {repeated[:3]}); sort the scan law by "
+            f"{C.scanlaw_dr4()} (e.g. {repeated[:3]}); sort the scan law by "
             "gaia_source_id before indexing"
         )
 
@@ -212,7 +212,7 @@ class ScanLawStore:
         self._span_of = dict(
             zip(index["gaia_source_id"], zip(index["offset"], index["length"]))
         )
-        self._table = _read_arrow(C.SCANLAW_DR4)
+        self._table = _read_arrow(C.scanlaw_dr4())
 
     def __contains__(self, gaia_source_id):
         return str(gaia_source_id) in self._span_of

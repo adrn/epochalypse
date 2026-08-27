@@ -17,5 +17,9 @@ cd /mnt/home/apricewhelan/work/epochalypse
 source .venv/bin/activate
 
 date
-python scripts/characterize_finish.py --stages calibrate census merge
+CATALOG_ROOT=/mnt/ceph/users/apricewhelan/project-outputs/epochalypse
+PGRAM_ROOT=$CATALOG_ROOT/periodograms
+
+python scripts/characterize_finish.py --stages calibrate census merge \
+    --catalog-root $CATALOG_ROOT --output-root $PGRAM_ROOT
 date

@@ -48,19 +48,34 @@ usable on a laptop. `uv sync --extra analysis` adds scipy and h5py for
 
 ### Inputs
 
-Four static files under `data/g23h_epochalypse_stars/` and `data/`, none
-produced here. The two large ones are gitignored; the small ones are committed.
-Paths are `G23H_SAMPLE` and `SCANLAW_DR4` in
-`src/epochalypse/config.py`.
+Two kinds, with different lifecycles.
 
-| file | what |
+**The delivered dataset** — the parent sample and the DR4 scan law, ~12 GB — is
+relocatable with `--data-root`, because it changes from run to run and does not
+belong in a home directory. The layout under that root mirrors `data/`, so
+moving it is a straight copy:
+
+```bash
+--data-root $DATA_ROOT      # e.g. <scratch>/project-data/epochalypse
+```
+
+| under `<data-root>/g23h_epochalypse_stars/` | what |
 | --- | --- |
-| `G23H_within_250pc.arrow` (1.2 GB) | parent sample, one row per DR2 cross-match |
-| `scanlaw_dr4_within_250pc_hpx64_transit_loss10.arrow` (10.7 GB) | DR4 scan law, one row per FoV transit |
-| `G23H_sample_subset.arrow` (13 MB, committed) | 16k-star smoke-test sample |
-| `pecaut_mamajek.txt`, `gost_fov_counts_dr4.fits` | P&M13 main sequence; GOST healpix map (sky figure) |
+| `G23H_within_500pc.arrow` (1.2 GB) | parent sample, one row per DR2 cross-match |
+| `scanlaw_dr4_within_500pc_hpx64_transit_loss10.arrow` (10.7 GB) | DR4 scan law, one row per FoV transit |
 
-For a smoke test, point `G23H_SAMPLE` at the committed subset instead.
+`G23H_NAME` and `SCANLAW_NAME` in `src/epochalypse/config.py` are the filenames;
+point `G23H_NAME` at the committed `G23H_sample_subset.arrow` to run the whole
+pipeline against the 16k smoke sample.
+
+**Reference data** is committed, versioned with the code, and never configured —
+`data/pecaut_mamajek.txt` (the P&M13 sequence) and `data/gost_fov_counts_dr4.fits`
+(the GOST healpix map, sky figure only). A fresh clone always has them, so the
+tests need no dataset.
+
+Outputs are relocatable the same way, with `--output-root`; the periodogram half
+adds `--catalog-root` for reading a catalog someone else generated. All five
+`mpi/*.sh` scripts set the ceph roots at the top.
 
 The scan law **must be grouped by `gaia_source_id`**, one contiguous block per
 source, or the offset index is meaningless. `build_indices` verifies this and
@@ -98,76 +113,42 @@ died.
 
 ## On a Slurm cluster
 
-`simulate_mpi.py` is SPMD, not a worker pool: every rank runs the same code, asks
-`COMM_WORLD` which rank it is, takes its own contiguous slice of the source
-list, and writes its own files. Ranks talk once, in a `gather` at the end, to
-print a summary. So there is **no** `-m mpi4py.futures` and no `--mpi` flag —
-and no `-n` on `mpirun` either, since the allocation already fixes the rank
-count. `--ntasks-per-node` is the knob that matters, because per-rank memory is
-what binds (below), not cores.
-
-**Prep** (serial, memory-hungry — not a login-node job; see below):
+The submit scripts live in `mpi/` and are the source of truth — `1-prep.sh`,
+`2-sim.sh`, `3-finish.sh` for the catalog, then `4-periodograms.sh` and
+`5-periodogram-finish.sh` for the characterization. Each sets its roots at the
+top:
 
 ```bash
-#!/bin/zsh -l
-#SBATCH -J epochalypse-prep
-#SBATCH -o logs/epochalypse-prep.o%j
-#SBATCH -e logs/epochalypse-prep.e%j
-#SBATCH -N 1
-#SBATCH -c 1
-#SBATCH --mem=300G
-#SBATCH -t 4:00:00
-#SBATCH -p cca
-#SBATCH --constraint=rome
-
-cd /mnt/ceph/users/apricewhelan/projects/epochalypse/parallelized
-source .venv/bin/activate
-
-date
-python scripts/generate_catalog.py --stages stars index
-date
+DATA_ROOT=$CEPH/project-data/epochalypse       # the delivered inputs, ~12 GB
+OUT_ROOT=$CEPH/project-outputs/epochalypse     # the catalog, ~50 GB
 ```
 
-**Simulate**:
+`mkdir -p logs` first, then chain them:
 
 ```bash
-#!/bin/zsh -l
-#SBATCH -J epochalypse-sim
-#SBATCH -o logs/epochalypse-sim.o%j
-#SBATCH -e logs/epochalypse-sim.e%j
-#SBATCH -N 8
-#SBATCH --ntasks-per-node=64
-#SBATCH -t 2:00:00
-#SBATCH -p cca
-#SBATCH --constraint=rome
-
-cd /mnt/ceph/users/apricewhelan/projects/epochalypse/parallelized
-source .venv/bin/activate
-
-# one BLAS thread per rank: with tens of ranks per node the per-rank thread
-# pools would otherwise oversubscribe the cores
-export OMP_NUM_THREADS=1
-export JAX_PLATFORMS=cpu          # skip the GPU probe on CPU nodes
-
-date
-mpirun python scripts/simulate_mpi.py --skip-existing
-date
+prep=$(sbatch --parsable mpi/1-prep.sh)
+sim=$(sbatch --parsable --dependency=afterok:$prep mpi/2-sim.sh)
+sbatch --dependency=afterok:$sim mpi/3-finish.sh
 ```
 
-Note the scripts activate `.venv` and call `python` rather than using
-`uv run`: under `mpirun` every rank would otherwise re-check the environment at
-once, which is both pointless and unkind to the filesystem. Run `uv sync` once,
-before submitting.
+Three things about those scripts that are easy to get wrong:
 
-`mkdir -p logs` first, then chain the three steps:
+**No `-n` on `mpirun`, and no `mpi4py.futures`.** Both MPI stages are SPMD, not
+worker pools: every rank runs the same code, asks `COMM_WORLD` which rank it is,
+takes its own contiguous slice, and writes its own files. Ranks talk once, in a
+`gather` at the end. The allocation already fixes the rank count, so
+`--ntasks-per-node` is the knob that matters — see below, because it is memory
+that binds, not cores.
 
-```bash
-prep=$(sbatch --parsable prep.sh)
-sim=$(sbatch --parsable --dependency=afterok:$prep sim.sh)
-sbatch --dependency=afterok:$sim finish.sh   # --stages merge select figures
-```
+**`OMP_NUM_THREADS=1`.** With tens of ranks per node the per-rank BLAS thread
+pools oversubscribe the cores, and that is invisible until the job is slow.
+`JAX_PLATFORMS=cpu` also skips a pointless GPU probe on the simulation side.
 
-`--skip-existing` on the simulate step means a requeue after a node failure only
+**Activate `.venv` and call `python`, not `uv run`.** Under `mpirun` every rank
+would otherwise re-check the environment at once. Run `uv sync` once before
+submitting.
+
+`--skip-existing` on both MPI stages means a requeue after a node failure only
 redoes the ranks that died, so it costs nothing to leave on.
 
 ### Per-rank memory sets `--ntasks-per-node`

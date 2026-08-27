@@ -36,17 +36,42 @@ ROOT = Path(__file__).resolve().parents[2]
 # ==========================================================================
 # Inputs -- static, not produced here
 # ==========================================================================
-DATA_IN = ROOT / "data"
-G23H_SAMPLE = DATA_IN / "g23h_epochalypse_stars" / "G23H_within_500pc.arrow"
-SCANLAW_DR4 = (
-    DATA_IN
-    / "g23h_epochalypse_stars"
-    / "scanlaw_dr4_within_500pc_hpx64_transit_loss10.arrow"
-)
-# The 16k-star G23H_sample_subset.arrow is the committed smoke-test sample;
-# point G23H_SAMPLE at it to exercise the pipeline without the full inputs.
-PECAUT_MAMAJEK = DATA_IN / "pecaut_mamajek.txt"
-GOST_FOV_MAP = DATA_IN / "gost_fov_counts_dr4.fits"  # sky-map figure only
+# Two kinds of input, with different lifecycles.
+#
+# The DELIVERED DATASET -- the parent sample and the DR4 scan law -- is ~12 GB
+# and changes from run to run (250 pc, then 500 pc, then wherever it lives
+# next), so it gets a root `--data-root` can move. The layout under that root
+# mirrors `data/`, so relocating it is a straight copy:
+#
+#     --data-root <scratch>/project-data/epochalypse
+#
+# Paths, not constants, because the root is set at argv parse and these must
+# see it. Swap `G23H_NAME` for `G23H_sample_subset.arrow` to run the whole
+# pipeline against the committed 16k sample.
+DATA_ROOT = ROOT / "data"
+G23H_NAME = "G23H_within_500pc.arrow"
+SCANLAW_NAME = "scanlaw_dr4_within_500pc_hpx64_transit_loss10.arrow"
+
+
+def set_data_root(path) -> None:
+    """Point the delivered inputs somewhere else (`--data-root`)."""
+    global DATA_ROOT
+    DATA_ROOT = Path(path).resolve()
+
+
+def g23h_sample():
+    return DATA_ROOT / "g23h_epochalypse_stars" / G23H_NAME
+
+
+def scanlaw_dr4():
+    return DATA_ROOT / "g23h_epochalypse_stars" / SCANLAW_NAME
+
+
+# REFERENCE DATA: small, committed, versioned with the code. Never configured,
+# so a checkout always has it and the tests never need a dataset.
+REFERENCE_DIR = ROOT / "data"
+PECAUT_MAMAJEK = REFERENCE_DIR / "pecaut_mamajek.txt"
+GOST_FOV_MAP = REFERENCE_DIR / "gost_fov_counts_dr4.fits"  # sky-map figure only
 
 # ==========================================================================
 # Outputs
