@@ -207,7 +207,13 @@ def main(argv=None):
                 limit=args.limit,
                 skip_existing=args.skip_existing,
                 verbose=True,
-                progress_every=0,
+                # Rank 0 only: 2048 ranks at one line per 50 systems is a
+                # quarter-million lines in one log file, and one rank's rate is
+                # all you need. Silence here is what made the first production
+                # attempt undiagnosable -- a unit is hours long, so the
+                # unit-completion line alone tells you nothing until it is too
+                # late to act on.
+                progress_every=50 if rank == 0 else 0,
             )
         )
 

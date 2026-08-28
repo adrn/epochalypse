@@ -126,7 +126,7 @@ def run_unit(
     top_k=None,
     limit=None,
     skip_existing=False,
-    progress_every=200,
+    progress_every=50,
     verbose=True,
 ):
     """Fit every system in one work unit; write its two parquet files.

@@ -37,11 +37,27 @@ N_PRIOR_SAMPLES = 1_000_000
 # uniform: exactly this many rows for every system, always.
 TOP_K = 1024
 
-# Prior samples evaluated per JIT'd batch. Measured optimum ~10^4: at 10^5 the
-# (batch, n_epochs, 6) design matrix reaches ~500 MB and streams to DRAM; at
-# 10^3 the per-batch overhead starts to show. harv's default is 100_000, which
-# is GPU advice.
-BATCH_SIZE = 10_000
+# Prior samples evaluated per JIT'd batch. This is the setting that decides
+# whether the stage is compute-bound or memory-bound, so it is worth the space.
+#
+# The (batch, n_epochs, n_linear) design matrix is the largest intermediate, and
+# it is streamed once per batch -- 100 times per system at M=10^6. At float64,
+# N=320 and 9 linear columns:
+#
+#   batch = 10^4  ->  230 MB per rank    batch = 10^3  ->  23 MB per rank
+#
+# Measured single-threaded on a laptop core, 10^4 is marginally the faster of
+# the two (2.53 vs 2.66 us/sample) -- and that measurement is misleading,
+# because one core had the whole cache and the full memory bandwidth to itself.
+# On a 64-rank Rome node, 64 x 230 MB streamed 100 times per system saturates
+# DRAM: the first production attempt ran at >=36 s/system against a 6 s/system
+# budget and completed no unit in two hours. 23 MB per rank fits per-rank cache,
+# which is what matters when the node is full.
+#
+# So: 10^3 for a full node. Raise it toward 10^4 only for a run with few ranks
+# per node, and re-measure if you do. harv's default is 100_000, which is GPU
+# advice -- at N=320 that intermediate is 2.3 GB.
+BATCH_SIZE = 1_000
 
 # Master seed. Each system's seed is derived from its gaia_source_id, the way
 # `planets.system_seed` does, so a rerun of any subset reproduces exactly.
