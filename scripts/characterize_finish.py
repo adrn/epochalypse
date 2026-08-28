@@ -72,7 +72,7 @@ def stage_census(args):
 def stage_merge(args):
     for population in args.populations:
         for high_snr in (False, True):
-            if high_snr and C.N_COMPANIONS[population] == 0:
+            if high_snr and C.POPULATIONS[population] == 0:
                 continue
             path, n = cal.merge(population, high_snr=high_snr, columns=None)
             size = path.stat().st_size / 1e9
