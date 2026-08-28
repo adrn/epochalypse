@@ -273,6 +273,46 @@ def test_fit_system():
     )
 
 
+def test_x64_is_on():
+    """Importing the subpackage must enable x64, whatever else was imported.
+
+    The failure mode is silent garbage, not an error: at float32 every
+    log-likelihood over the 7.8-decade period prior underflows to -inf, ESS
+    comes back NaN, and top-K then returns arbitrary rows. This caught a real
+    probe script that imported `library` and `adapt` but not `unit`, when `unit`
+    was the only module setting the flag.
+    """
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from epochalypse.harv import library; import jax; "
+            "print(jax.config.jax_enable_x64)",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    check("a library-only import enables x64", out == "True", f"got {out!r}")
+    check(
+        "and so does importing the subpackage itself",
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import epochalypse.harv; import jax; print(jax.config.jax_enable_x64)",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        == "True",
+    )
+
+
 def test_sample_units():
     """The manifest is written before the first fit, so its units are hard-coded.
 

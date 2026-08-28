@@ -205,6 +205,32 @@ def stage_recovery(args):
                     f"recovered {row['recovered']:>6.1%}  ESS med {row['ess']:>6.1f}"
                 )
 
+        # Where do the failures land? With ESS ~ 1 the answer is a single prior
+        # draw, and an astrometric likelihood is multi-modal: the annual
+        # parallax term puts aliases at 1/P +- 1/yr, and 2P / P/2 also compete.
+        # If the misses cluster at particular ratios they are aliases -- more
+        # samples make the true mode reliably win. If they are spread flat, the
+        # data simply does not constrain those systems.
+        missed = frame[~frame["recovered"].astype(bool)]
+        if len(missed):
+            ratio = np.log10(
+                np.asarray(missed["period_best_yr"], float)
+                / np.asarray(missed["period_1"], float)
+            )
+            ratio = ratio[np.isfinite(ratio)]
+            edges = [-9, -3, -1, -0.5, -0.3, -0.1, 0.1, 0.3, 0.5, 1, 3, 9]
+            counts, _ = np.histogram(ratio, bins=edges)
+            print(f"\n  where the {len(missed):,} misses landed, log10(P_best/P_true):")
+            for lo, hi, n in zip(edges[:-1], edges[1:], counts):
+                if not n:
+                    continue
+                bar = "#" * round(40 * n / counts.max())
+                print(f"    {lo:>5.1f} to {hi:>4.1f}  {n:>6,}  {bar}")
+            print(
+                f"    railed at the prior edge (P_best < 1e-3 yr): "
+                f"{(np.asarray(missed['period_best_yr'], float) < 1e-3).sum():,}"
+            )
+
         # The grid is the point: it says whether a low headline number is the
         # baseline's fault (bad everywhere except the sweet spot) or the
         # prior's (bad at high e even in the sweet spot).
