@@ -74,7 +74,7 @@ pipeline against the 16k smoke sample.
 tests need no dataset.
 
 Outputs are relocatable the same way, with `--output-root`; the periodogram half
-adds `--catalog-root` for reading a catalog someone else generated. All five
+adds `--catalog-root` for reading a catalog someone else generated. All seven
 `scripts/mpi/*.sh` scripts source `scripts/mpi/env.sh`.
 
 The scan law **must be grouped by `gaia_source_id`**, one contiguous block per
@@ -115,15 +115,17 @@ died.
 
 The submit scripts live in `scripts/mpi/` and are the source of truth —
 `1-prep.sh`, `2-sim.sh`, `3-finish.sh` for the catalog, then
-`4-periodograms.sh` and `5-periodogram-finish.sh` for the characterization.
+`4-periodograms.sh` and `5-periodogram-finish.sh` for the characterization, then
+`6-harv.sh` and `7-harv-finish.sh` for the posteriors.
 
-All three roots live in one place, `scripts/mpi/env.sh`, which every script
+All four roots live in one place, `scripts/mpi/env.sh`, which every script
 sources:
 
 ```bash
 export DATA_ROOT=<scratch>/project-data/epochalypse      # delivered inputs, ~12 GB
 export OUT_ROOT=<scratch>/project-outputs/epochalypse    # the catalog, ~50 GB
 export PGRAM_ROOT=$OUT_ROOT/periodograms                 # raw curves, ~915 GB
+export HARV_ROOT=$OUT_ROOT/harv                          # posterior samples, ~850 GB
 ```
 
 The characterization stages pass `--catalog-root $OUT_ROOT`: the catalog they
@@ -210,18 +212,21 @@ epochalypse/
 │   ├── figures.py              the catalog figures
 │   ├── mpi.py                  the MPI plumbing both parallel stages share
 │   ├── shardio.py              the buffered parquet writer they share
-│   └── periodogram/            the characterization half (see PERIODOGRAMS.md)
+│   ├── periodogram/            the characterization half (see PERIODOGRAMS.md)
+│   └── harv/                   the posterior half (see HARV.md)
 ├── scripts/                    the entry points
 │   ├── generate_catalog.py     stages: stars, index, merge, select, figures
 │   ├── simulate_mpi.py         the simulation; MPI ranks, the cluster entry point
 │   ├── simulate_source.py      print one star, for inspection
 │   ├── characterize_mpi.py     the periodogram search; MPI ranks
 │   ├── characterize_finish.py  stages: calibrate, census, merge
-│   └── periodogram_source.py   print one system's periodogram, for inspection
+│   ├── periodogram_source.py   print one system's periodogram, for inspection
+│   ├── harv_mpi.py             the posterior fits; MPI ranks
+│   └── harv_finish.py          stages: census, merge
 ├── pyproject.toml              dependencies; uv.lock pins them
 ├── data/                       static inputs (see Setup)
 ├── outputs/                    generated: data/ (shards, indices, truth tables), figures/
-└── tests/                      test_pipeline.py, test_periodograms.py
+└── tests/                      test_pipeline.py, test_periodograms.py, test_harv.py
 ```
 
 ## Why the lookup layer exists
@@ -267,3 +272,9 @@ eccentricity, inclination, period, alpha, SNR). Any previously generated
 The characterization half now runs against the parquet shards -- see
 `PERIODOGRAMS.md`. The old serial analysis module was deleted with it; two of
 its capabilities have no successor in the kepmodel path and are noted there.
+
+The posterior half -- harv against a single catalog-wide prior library, 1,024
+weighted samples per system -- runs end to end and is documented in `HARV.md`.
+Its cost model is still a laptop extrapolation: run `harv_mpi.py --subsample`
+on the cluster and read the real per-system rate before committing the full
+job.

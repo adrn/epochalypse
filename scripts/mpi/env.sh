@@ -8,3 +8,7 @@ export OUT_ROOT=/mnt/ceph/users/apricewhelan/project-outputs/epochalypse
 # The characterization reads the catalog the generator wrote -- so its
 # --catalog-root IS $OUT_ROOT -- and writes its own products beside it.
 export PGRAM_ROOT=$OUT_ROOT/periodograms
+
+# harv posterior inference reads the same catalog and writes beside the
+# periodograms. ~850 GB of samples at TOP_K=1024, plus ~2 GB of per-system rows.
+export HARV_ROOT=$OUT_ROOT/harv
