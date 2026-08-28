@@ -3,7 +3,7 @@ name = "epochalypse"
 version = "0.1.0"
 description = "Simulated Gaia DR4 epoch astrometry for ~4 million stars"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"   # harv requires 3.12+
 
 dependencies = [
     "numpy",
@@ -14,7 +14,8 @@ dependencies = [
     "jaxoplanet",  # the Keplerian reflex model
     "matplotlib",
     "healpy",      # the sky-map figure only
-    "kepmodel",    # J.-B. Delisle's astrometric periodogram -- the period search
+    "kepmodel",
+    "harv",
 ]
 
 [project.optional-dependencies]
@@ -46,3 +47,6 @@ dev = [
 
 [tool.ruff]
 extend-exclude = ["old", "data", "outputs"]
+
+[tool.uv.sources]
+harv = { git = "https://github.com/adrn/harv.git", rev = "3fb0a2309c3c3c52c0dce1a2f5e9693f8786e39c" }
