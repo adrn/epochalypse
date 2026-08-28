@@ -100,9 +100,13 @@ the full run is a five-figure core-hour commitment.
 
 ## Cost
 
-**The single-core numbers below are not the budget. A full node is 5–10× worse
-per rank, and the first production attempt proved it.** Read this whole section
-before sizing a job.
+> **Superseded.** The single-core numbers below were measured on a laptop and
+> are wrong by 8–10× for this kernel — see `scripts/benchmarks/RESULTS.md` for
+> the measured replacement (genoa, 96 ranks/node, M=10⁵, ~24,000 core-h). The
+> laptop table is kept only because the *ratios within it* still explain why
+> `BATCH_SIZE` and the epoch bucket matter. Do not size a job from it.
+
+**A full node costs 1.34× per rank, not the 5–10× this section used to claim.**
 
 Measured single-threaded, x64, on one M-series core:
 
