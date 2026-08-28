@@ -99,21 +99,53 @@ identical, so this should hold, but it is not measured.
 ## Corrections to earlier estimates
 
 The single most useful result here is that **this kernel cannot be benchmarked
-on a laptop.** Scaled to a common epoch bucket, an M-series performance core is
-**7.6–10× faster than a genoa core** on this code:
+on a laptop.** Measured at the *same* epoch buckets — the laptop system's epochs
+truncated to match, not extrapolated:
 
-| | laptop, bucket 320 | genoa, bucket 84 | genoa scaled to 320 | ratio |
-| --- | --- | --- | --- | --- |
-| M=10⁶ | 8.32 s | 16.54 s | ~63 s | 7.6× |
-| M=10⁵ | 1.27 s | 3.37 s | ~12.8 s | 10.1× |
+| bucket | M4 Max, 1 core | genoa, 1 core | ratio |
+| --- | --- | --- | --- |
+| 80 | 2.66 s | 16.56 s | **6.2×** |
+| 96 | 2.93 s | 19.04 s | **6.5×** |
 
-**The cause is not known.** The obvious candidate was XLA CPU threading — the
-production scripts set `--xla_cpu_multi_thread_eigen=false
-intra_op_parallelism_threads=1` and the laptop runs did not — but setting those
-flags locally changes the time by 0.8% (1.27 → 1.28 s), so that is ruled out.
-See Open questions.
+Fitting cost as `fixed + per-epoch` separates the two contributions:
 
-What this invalidated:
+| | fixed | per epoch |
+| --- | --- | --- |
+| M4 Max | 0.80 s | 23.3 ms |
+| genoa | 4.16 s | 155.0 ms |
+| ratio | 5.2× | 6.7× |
+
+**The gap is uniform across both terms**, which is itself a result: a cache or
+bandwidth pathology would inflate the per-epoch term much more than the fixed
+one. A flat ~6× says general per-core throughput or code generation, not a
+specific bottleneck.
+
+How much of 6× is legitimate? The laptop is an **M4 Max** — a top-end part with
+12 performance cores boosting to ~4.5 GHz. A genoa core is one of 96 designed
+for throughput density, at ~2.4 GHz base and ~3.7 GHz single-core boost. Clock
+accounts for 1.2–1.9× and M4's much wider core plausibly another 1.5–2×, so
+**2–3.5× is expected and ~2× is not**. See Open questions — that ~2× is worth
+chasing, because it is a factor of two on a 24,000 core-hour job.
+
+Ruled out as causes, by direct test on the laptop (M=10⁵, bucket 320):
+
+| environment | s/system |
+| --- | --- |
+| nothing set (how the laptop numbers were taken) | 1.27 |
+| `OMP_NUM_THREADS=1` | 1.28 |
+| `XLA_FLAGS` as the submit scripts set them | 1.29 |
+| the full cluster environment | 1.30 |
+
+So neither XLA CPU threading nor the BLAS thread limits explain anything; the
+submit scripts' environment is not the problem.
+
+**An earlier version of this document reported the gap as 7.6–10×.** That came
+from extrapolating the laptop's bucket-320 measurement down to bucket 84
+*through the origin*, which ignores the 0.80 s fixed cost per system. Measuring
+at the same bucket instead of scaling to it removes the error — the same mistake,
+in miniature, as sizing a cluster job from a laptop.
+
+What this invalidated:What this invalidated:
 
 | claim | where it came from | reality |
 | --- | --- | --- |
@@ -128,9 +160,11 @@ a JAX/XLA kernel with a completely different instruction mix was the mistake.
 
 ## Open questions
 
-1. **Why is a genoa core 8× slower than an M-series core here?** Worth 10
-   minutes, because if any of it is environmental the whole budget moves.
-   Compare versions first — the laptop has jax/jaxlib 0.11.1:
+1. **~2× of the 6.3× core gap is unexplained.** Worth 10 minutes: it is a
+   factor of two on the recommended job. Compare versions first — the laptop has
+   jax/jaxlib **0.11.1**, and harv pins `jax==0.8.1`, so if `uv sync` resolved
+   harv's pin on the cluster that is three minor versions of XLA code
+   generation between the two measurements:
 
    ```bash
    python -c "import jax, jaxlib; print(jax.__version__, jaxlib.__version__)"
