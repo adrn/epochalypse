@@ -12,3 +12,17 @@ export PGRAM_ROOT=$OUT_ROOT/periodograms
 # harv posterior inference reads the same catalog and writes beside the
 # periodograms. ~850 GB of samples at TOP_K=1024, plus ~2 GB of per-system rows.
 export HARV_ROOT=$OUT_ROOT/harv
+
+# Matplotlib's font cache. harv imports matplotlib (via its plotting helpers),
+# and this site puts caches in node-local /dev/shm, so every rank on every node
+# finds an empty cache, races for one lock file, loses, and rebuilds the font
+# list by parsing system TTFs. Nothing in this pipeline plots.
+#
+# Point every rank at one pre-built cache instead. Build it ONCE, on the login
+# node, with this same venv:
+#
+#   mkdir -p $MPLCONFIGDIR && python -c "import matplotlib.font_manager"
+#
+# The matplotlib version is in the cache filename, so rebuild it after an
+# upgrade. MPLCONFIGDIR overrides XDG_CACHE_HOME.
+export MPLCONFIGDIR=$HOME/.cache/matplotlib-mpi
