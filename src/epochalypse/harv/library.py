@@ -79,10 +79,23 @@ def parameterization(data=None):
     return ThieleInnesGaiaAstrometry.from_data(data)
 
 
+def eccentricity_prior():
+    """The eccentricity prior, overriding harv's Kipping default.
+
+    See `config.ECC_LOC` for why: Kipping under-samples the injected
+    Uniform(0, 0.99) by 14x above e = 0.7, and measured period recovery falls
+    with eccentricity because of it.
+    """
+    import numpyro.distributions as dist
+
+    return dist.TruncatedNormal(C.ECC_LOC, C.ECC_SCALE, low=0.0, high=1.0)
+
+
 def prior(par=None):
     """The single catalog-wide prior, from the constants in `config`."""
     par = parameterization() if par is None else par
     return par.default_prior(
+        eccentricity=eccentricity_prior(),
         period_min=Q(C.PERIOD_MIN_YR, "yr"),
         period_max=Q(C.PERIOD_MAX_YR, "yr"),
         sigma_pos=Q(C.SIGMA_POS_MAS, "mas"),
@@ -142,6 +155,9 @@ def describe(library=None):
         "sigma_vtan_kms": C.SIGMA_VTAN_KMS,
         "sigma_a0_au": C.SIGMA_A0_AU,
         "p0_yr": C.P0_YR,
+        # Not harv's default -- a run's fingerprint changes with it, and a
+        # recovery number is not comparable across two different ones.
+        "eccentricity_prior": f"TruncatedNormal({C.ECC_LOC}, {C.ECC_SCALE}, 0, 1)",
     }
     if library is not None:
         described["sampled"] = sorted({**library.nonlinear, **library.linear})

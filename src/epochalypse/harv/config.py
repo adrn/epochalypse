@@ -115,6 +115,30 @@ SIGMA_A0_AU = 1.0  # semi-major axis at P0, scaling as (P/P0)^(2/3)
 P0_YR = 1.0
 
 # ==========================================================================
+# The eccentricity prior
+# ==========================================================================
+# harv's default is Kipping (2013), Beta(0.867, 3.03) -- an astrophysical prior
+# for real planets, mean e ~ 0.22. This catalog injects Uniform(0, 0.99), so
+# Kipping under-samples the half of the truth it most needs to cover:
+#
+#              P(e>0.7)  P(e>0.9)
+#   injected      0.293     0.091
+#   Kipping       0.021     0.001     <- 14x and 91x under
+#   this prior    0.225     0.048     <- 1.3x and 1.9x
+#
+# Measured consequence at M=1e6 on the high-SNR 1_companion subset: period
+# recovery falls monotonically with the injected eccentricity, 45.3% at e<0.3
+# down to 16.8% at e>0.9. A recovery test run under Kipping is measuring prior
+# mismatch as much as method performance.
+#
+# A broad hump centred at 0.5 rather than Uniform(0, 0.99): it covers the
+# injected range well while staying a proper informative prior. It still
+# down-weights e > 0.9 by ~2x relative to the injection, which is where recovery
+# is worst -- switch to Uniform if that residual matters.
+ECC_LOC = 0.5
+ECC_SCALE = 0.3
+
+# ==========================================================================
 # Epoch padding
 # ==========================================================================
 # harv JITs per epoch count and the catalog spans 44-298, so every distinct
