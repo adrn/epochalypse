@@ -292,5 +292,9 @@ def merged_systems(population):
     return OUTPUT_ROOT / f"harv_systems_{population}.parquet"
 
 
+def figure_dir():
+    return OUTPUT_ROOT / "figures"
+
+
 def failed_dir():
     return OUTPUT_ROOT / "failed"

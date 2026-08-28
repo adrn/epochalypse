@@ -348,6 +348,68 @@ the test suite so they cannot drift.
 `config.samples_dir(population)`, which memory-maps row groups instead of
 materializing 850 GB.
 
+## Reading the diagnostics
+
+`harv_finish.py --stages census recovery figures` produces a text census, a
+binned recovery breakdown, and four PNGs in `$HARV_ROOT/figures/`. **Read them
+in this order** — a single recovery percentage is close to uninterpretable on its
+own, because three unrelated things limit it and they compound.
+
+| figure | question it answers |
+| --- | --- |
+| `harv_recovery_map` | where in (period, eccentricity) does the method work? |
+| `harv_period_aliases` | when it fails, *where* does the period land? |
+| `harv_library` | did the library resolve these posteriors? |
+| `harv_detection` | at what signal strength does recovery turn on? |
+
+**1. `harv_recovery_map`** — recovery over a period × eccentricity grid, with
+both marginals and per-bin counts and binomial errors. The period profile is the
+shape of the **recoverable window**: DR4 is 5.5 yr with ~80 transits, so only
+roughly 0.1–10 yr is constrainable, while the injected prior spans 7.8 decades.
+Most of that prior is unrecoverable *by construction*, and no library size fixes
+it. The eccentricity profile is **prior coverage**, which is fixable — see
+`config.ECC_LOC`. If recovery is high in the sweet spot and flat in
+eccentricity, what remains is library resolution.
+
+**2. `harv_period_aliases`** — `P_best` against `P_true`, with the ±tolerance
+band and the alias tracks drawn on: the annual parallax term puts aliases at
+`1/P_best = 1/P_true ± 1 yr⁻¹`, and the 2× / 0.5× harmonics compete too. With
+`ess ≈ 1` the reported period is a *single* prior draw, so misses **on** those
+tracks are a resolution problem that more samples fix, while misses scattered
+flat mean the data does not constrain those systems. The right panel histograms
+exactly that.
+
+**3. `harv_library`** — the ESS and `weight_captured` distributions, and
+recovery against ESS. That third panel runs **backwards** and is the one most
+likely to be misread: a well-constrained period gives a sharp posterior, which a
+fixed-size library resolves with *fewer* effective samples. Low ESS where
+recovery is high is correct. ESS says "the library did not sample this
+posterior", never "the answer is wrong".
+
+**4. `harv_detection`** — `logZ_int` per population, with `0_companion` as the
+null distribution, and the completeness curve against injected SNR. The control
+is the same one the periodogram stage calibrates its thresholds on.
+
+### What a healthy run looks like
+
+- `weight_captured` piled at 1.0, `wcap low` at 0% — `TOP_K` is ample.
+- `0_companion` with the **highest** median ESS. No signal means the broadest
+  posterior; if the control is not highest, something is wrong with the
+  likelihood.
+- Recovery peaking in the 0.1–10 yr band and falling off both sides.
+- `logZ_int` for the companion populations shifted above the control.
+
+### Measured, at M = 10⁶ on 20,160 systems per population
+
+Recovery was 32.2% on the high-SNR `1_companion` subset. Binning it showed the
+shape of the recoverable window (0% below 0.01 yr, 53.7% at 1–3.2 yr, 7.7% above
+10 yr) and a monotonic decline with eccentricity. Neither is a bug: at that M the
+library is under-resolved by ~2,000 nats even for a strongly detected system,
+and the fit converges to the optimum by M = 10⁷. The two levers are
+`N_PRIOR_SAMPLES` and the *width* of the period prior — narrowing it from 7.8 to
+4.0 decades is worth roughly one order of magnitude of M for period accuracy, at
+no cost. See `scripts/benchmarks/RESULTS.md` for the numbers.
+
 ## Reading the output
 
 ```python

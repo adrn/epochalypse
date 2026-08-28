@@ -15,6 +15,8 @@ Stages:
   recovery period recovery binned by injected period and eccentricity -- the
            two things that actually limit it, and the breakdown that tells you
            whether a low number is the data's fault or the prior's
+  figures  four diagnostic PNGs -- see epochalypse.harv.figures for what each
+           one answers and the order to read them in
   merge    each population's per-system shards -> one parquet
 
 **The samples are never merged.** They are ~850 GB across the catalog; read them
@@ -30,63 +32,23 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
+from epochalypse.harv import census
 from epochalypse.harv import config as C
-from epochalypse.periodogram import config as PG
+from epochalypse.harv import figures as F
 
-STAGES = ("census", "recovery", "merge")
+STAGES = ("census", "recovery", "figures", "merge")
 
 CENSUS_COLUMNS = ["ess", "weight_captured", "period_best_yr"]
 
 
-def _systems(population, columns=None):
-    """The per-system rows of one population, as one Arrow table."""
-    directory = C.systems_dir(population)
-    if not directory.exists():
-        raise FileNotFoundError(f"no harv output in {directory}")
-    return ds.dataset(directory, format="parquet").to_table(columns=columns)
-
-
-def _high_snr_mask(table, population):
-    """Every injected companion clears the SNR floor -- the generator's rule."""
-    n = C.POPULATIONS[population]
-    if n == 0:
-        return None
-    snr = np.column_stack(
-        [np.asarray(table[f"snr_total_{k}"], float) for k in range(1, n + 1)]
-    )
-    return np.isfinite(snr).all(axis=1) & (snr >= PG.HIGH_SNR_MIN).all(axis=1)
-
-
-def _recovered(table, population):
-    """|ln(P_best/P_true)| < ln(tol), against the BEST-matching companion.
-
-    harv fits a *single* companion, so in a two-companion system it can
-    legitimately lock onto either orbit. Scoring only against `period_1` -- as
-    this did originally -- marks a correct fit on companion 2 as a failure and
-    understates `2_companion` for no physical reason.
-
-    The tolerance is the periodogram stage's `PERIOD_RECOVER_TOL`, imported so
-    the two analyses cannot recover to different bars.
-    """
-    n = C.POPULATIONS[population]
-    if n == 0:
-        return None
-    best = np.asarray(table["period_best_yr"], float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        offsets = np.column_stack(
-            [
-                np.abs(np.log(best / np.asarray(table[f"period_{k}"], float)))
-                for k in range(1, n + 1)
-            ]
-        )
-    return np.nanmin(offsets, axis=1) < np.log(PG.PERIOD_RECOVER_TOL)
-
-
-def _period_columns(population):
-    return [f"period_{k}" for k in range(1, C.POPULATIONS[population] + 1)]
+# One authority for all four, in `epochalypse.harv.census`, because the figures
+# need exactly these rules -- see that module for why.
+_systems = census.read_systems
+_high_snr_mask = census.high_snr_mask
+_recovered = census.recovered
+_period_columns = census.period_columns
 
 
 def stage_census(args):
@@ -251,6 +213,12 @@ def stage_recovery(args):
             print(f"    {name!s:>16}{cells}")
 
 
+def stage_figures(args):
+    """Draw the diagnostics. Reads the shards, so it does not need `merge` first."""
+    for path in F.make_figures(args.figures):
+        del path
+
+
 def stage_merge(args):
     for population in args.populations:
         table = _systems(population)
@@ -283,6 +251,13 @@ def main(argv=None):
         default=list(C.POPULATIONS),
     )
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument(
+        "--figures",
+        nargs="+",
+        choices=list(F.FIGURES),
+        default=None,
+        help="which diagnostics to draw (default: all of them)",
+    )
     args = parser.parse_args(argv)
 
     if args.output_root:
@@ -303,9 +278,12 @@ def main(argv=None):
 
     for stage in args.stages:
         print(f"=== {stage} ===")
-        {"census": stage_census, "recovery": stage_recovery, "merge": stage_merge}[
-            stage
-        ](args)
+        {
+            "census": stage_census,
+            "recovery": stage_recovery,
+            "figures": stage_figures,
+            "merge": stage_merge,
+        }[stage](args)
         print()
     return 0
 

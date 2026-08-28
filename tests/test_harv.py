@@ -285,31 +285,20 @@ def test_x64_is_on():
     import subprocess
     import sys
 
-    out = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from epochalypse.harv import library; import jax; "
-            "print(jax.config.jax_enable_x64)",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    check("a library-only import enables x64", out == "True", f"got {out!r}")
-    check(
-        "and so does importing the subpackage itself",
-        subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import epochalypse.harv; import jax; print(jax.config.jax_enable_x64)",
-            ],
+    def x64_after(import_line):
+        code = f"{import_line}; import jax; print(jax.config.jax_enable_x64)"
+        return subprocess.run(
+            [sys.executable, "-c", code],
             capture_output=True,
             text=True,
             check=True,
         ).stdout.strip()
-        == "True",
+
+    out = x64_after("from epochalypse.harv import library")
+    check("a library-only import enables x64", out == "True", f"got {out!r}")
+    check(
+        "and so does importing the subpackage itself",
+        x64_after("import epochalypse.harv") == "True",
     )
 
 
