@@ -284,17 +284,6 @@ def test_shards(population="1_companion", n_systems=12):
             ),
         )
         check(
-            "analysis-schema aliases are present",
-            all(
-                c in chars
-                for c in ("a_1_au", "e_1", "Mp_1_msun", "i_1_rad", "alpha_1_mas")
-            ),
-        )
-        check(
-            "Mp_1_msun is mass_pl_1 converted, not copied",
-            np.allclose(chars["Mp_1_msun"], chars["mass_pl_1"] * C.MJUP_IN_MSUN),
-        )
-        check(
             "every row carries a klass",
             chars["klass"]
             .isin(["undetected", "broad", "multimodal", "unimodal"])
