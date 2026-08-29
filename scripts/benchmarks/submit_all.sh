@@ -5,10 +5,16 @@
 #   zsh scripts/benchmarks/submit_all.sh arch       # 3 jobs: which CPU?
 #   zsh scripts/benchmarks/submit_all.sh ranks      # 5 jobs: what does packing a node cost?
 #   zsh scripts/benchmarks/submit_all.sh settings   # 2 jobs: is a cheaper library cheaper?
-#   zsh scripts/benchmarks/submit_all.sh summary    # table from the logs, no submitting
+#   zsh scripts/benchmarks/submit_all.sh sigma-a0   # 4 jobs: what sets the detection threshold?
+#   zsh scripts/benchmarks/submit_all.sh sweep      # compare the sigma-a0 arms
+#   zsh scripts/benchmarks/submit_all.sh summary    # timing table from the logs, no submitting
 #
-# Every job is one exclusive node for at most 30 minutes, so the whole suite is
-# under 5 node-hours. They are independent and submitted together, so you wait
+# `arch`, `ranks` and `settings` are timing benchmarks: one exclusive node for at
+# most 30 minutes each, the whole suite under 5 node-hours. `sigma-a0` is a
+# CALIBRATION rather than a benchmark -- it measures what the orbit-amplitude
+# prior does to the detection threshold, which is the number that decides the
+# production run's science, not its cost. Roughly 50 min and 4 node-hours.
+# See sweep_sigma_a0.sh for why it exists and what to look for. They are independent and submitted together, so you wait
 # in one queue rather than ten.
 #
 #   ARCH=icelake zsh scripts/benchmarks/submit_all.sh ranks
@@ -25,7 +31,13 @@ cd $REPO
 WHICH=${1:-all}
 ARCH=${ARCH:-genoa}
 SUBMIT=scripts/benchmarks/bench_harv.sh
+SWEEP=scripts/benchmarks/sweep_sigma_a0.sh
 LOGS=scripts/benchmarks/logs
+
+# Always includes the current setting as a control arm: a sweep runs at a
+# smaller library size to stay cheap, which lowers recovery everywhere, so only
+# the relative comparison at fixed M means anything.
+SIGMA_A0_ARMS=(1.0 0.1 0.03 0.01)
 
 # ==========================================================================
 # summary -- read the logs, no submitting
@@ -53,6 +65,19 @@ if [[ $WHICH == summary ]]; then
     done
     print "\nLower 'warm s/sys' is a faster core; higher 'sys/s / node' is more"
     print "work per node. They can disagree -- the second is what you are buying."
+    exit 0
+fi
+
+if [[ $WHICH == sweep ]]; then
+    source scripts/mpi/env.sh
+    [[ -f .venv/bin/activate ]] && source .venv/bin/activate
+    roots=(${SWEEP_ROOT:-$HARV_ROOT-sweeps}/a0-*(N))
+    if (( ${#roots} == 0 )); then
+        print "no sweep arms under ${SWEEP_ROOT:-$HARV_ROOT-sweeps}/ yet"
+        print "submit them with: zsh $0 sigma-a0"
+        exit 0
+    fi
+    python scripts/benchmarks/sweep_summary.py $roots
     exit 0
 fi
 
@@ -118,6 +143,18 @@ if [[ $WHICH == ranks || $WHICH == all ]]; then
     done
 fi
 
+if [[ $WHICH == sigma-a0 || $WHICH == all ]]; then
+    print "\n=== what sets the detection threshold? (sigma_a0, AU at P0) ==="
+    print "  measured cliff at sigma_a0=1.0: railing 50% at SNR 5-10, 0% above 40."
+    print "  1.0 is the control arm -- compare the others against it, not against"
+    print "  the production run, which uses a larger library."
+    for s0 in $SIGMA_A0_ARMS; do
+        id=$(sbatch --parsable -J sweep-a0-$s0 $SWEEP $s0)
+        ids+=$id
+        printf "  %-22s %s   sigma_a0=%s\n" sweep-a0-$s0 $id $s0
+    done
+fi
+
 if [[ $WHICH == settings || $WHICH == all ]]; then
     print "\n=== is a cheaper library actually cheaper? (1 rank, $ARCH) ==="
     submit bench-M1e5 -C $ARCH --ntasks-per-node=1 -- --n-prior-samples 100000
@@ -126,5 +163,6 @@ fi
 
 print "\n${#ids} job(s) submitted."
 print "  watch    : squeue -u \$USER -o '%.10i %.24j %.2t %.6M %R'"
-print "  results  : zsh scripts/benchmarks/submit_all.sh summary"
+print "  results  : zsh scripts/benchmarks/submit_all.sh summary   (timing)"
+print "             zsh scripts/benchmarks/submit_all.sh sweep     (sigma_a0)"
 print "  cancel   : scancel ${ids[*]}"

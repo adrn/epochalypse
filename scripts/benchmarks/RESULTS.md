@@ -185,6 +185,51 @@ Perfect balance is 82.7 min against the observed 146.
 Contiguous slicing remains right for the periodogram, where per-system cost
 varies ~15% and the frequency loop dominates.
 
+## The orbit-amplitude prior sets the detection threshold — measured
+
+`SIGMA_A0_AU` is not a free knob. It is the width of the Gaussian prior on the
+orbit's astrometric amplitude, so it fixes the Occam penalty a real orbit pays
+against the no-orbit solution — and because the width scales as `(P/P₀)^(2/3)`,
+that penalty falls on real orbits and barely at all on the null.
+
+Measured on the 300,000-system run at M = 10⁶, `SIGMA_A0_AU = 1.0`, high-SNR
+`1_companion` within the searched period range. "Railed" means the best sample
+collapsed to the prior floor — a **non-detection**, not a wrong period:
+
+| SNR | n | railed | recovered |
+| --- | --- | --- | --- |
+| **5.0–10.0** | 2,671 | **50.2%** | 5.3% |
+| 10.0–20.0 | 2,031 | 20.4% | 34.5% |
+| 20.0–40.1 | 1,343 | 2.4% | 68.9% |
+| 40.1–80.4 | 662 | 0.3% | 76.0% |
+| > 80 | 240 | 0.0% | 82–100% |
+
+`2_companion` reproduces the same cliff independently (47.6% → 19.7% → 0%).
+
+**The effective threshold is SNR ≈ 15–20 while `HIGH_SNR_MIN` is 5.** The 5–10
+bin is 38% of the high-SNR sample and recovers 5.3%. Above the cliff the method
+works: 76–100%.
+
+`SIGMA_A0_AU = 1.0` is ~4,900× the median injected `a0` of 2.0×10⁻⁴ AU. The
+Occam arithmetic puts the crossover at SNR ≈ 7.3 there and ≈ 4.9 at 0.01 AU —
+which predicts the *direction*, not the magnitude. `scripts/benchmarks/sweep_sigma_a0.sh`
+measures the magnitude:
+
+```bash
+zsh scripts/benchmarks/submit_all.sh sigma-a0    # 4 arms, ~50 min, ~4 node-hours
+zsh scripts/benchmarks/submit_all.sh sweep       # compare them
+```
+
+**The sweep exists rather than a single change because there is a real risk at
+the other end.** Injected `a0` spans five decades and reaches 2.2 AU, so a prior
+tight enough to fix the faint end can bias the brightest orbits. Watch the
+`SNR > 80` column: if it degrades, the sweep has found the floor and the answer
+is 0.1 or 0.03, not 0.01.
+
+Note `sigma_a0` does **not** change the library fingerprint — it only affects
+the analytically marginalized Thiele-Innes priors, which are never drawn — so
+each arm needs its own `--output-root`. The sweep script handles that.
+
 ## Open questions
 
 1. **~2× of the 6.3× core gap is unexplained.** Worth 10 minutes: it is a
