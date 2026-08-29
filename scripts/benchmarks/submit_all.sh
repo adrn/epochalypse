@@ -13,8 +13,11 @@
 # most 30 minutes each, the whole suite under 5 node-hours. `sigma-a0` is a
 # CALIBRATION rather than a benchmark -- it measures what the orbit-amplitude
 # prior does to the detection threshold, which is the number that decides the
-# production run's science, not its cost. Roughly 50 min and 4 node-hours.
-# See sweep_sigma_a0.sh for why it exists and what to look for. They are independent and submitted together, so you wait
+# production run's science, not its cost. It runs at the PRODUCTION library size
+# -- a cheaper one would confound "the library never found the orbit" with "the
+# prior made the null cheaper", which is the distinction being measured -- and
+# affords that by fitting only high-SNR 1_companion systems. ~9 min and ~56
+# core-hours for all four arms. See sweep_sigma_a0.sh. They are independent and submitted together, so you wait
 # in one queue rather than ten.
 #
 #   ARCH=icelake zsh scripts/benchmarks/submit_all.sh ranks
@@ -146,6 +149,8 @@ fi
 if [[ $WHICH == sigma-a0 || $WHICH == all ]]; then
     print "\n=== what sets the detection threshold? (sigma_a0, AU at P0) ==="
     print "  measured cliff at sigma_a0=1.0: railing 50% at SNR 5-10, 0% above 40."
+    print "  M=1e6 (production), high-SNR 1_companion only -- ~9 min per arm."
+    print "  for M=1e7 instead:  sbatch -J sweep-a0-<s> $SWEEP <s> 2000 10000000"
     print "  1.0 is the control arm -- compare the others against it, not against"
     print "  the production run, which uses a larger library."
     for s0 in $SIGMA_A0_ARMS; do

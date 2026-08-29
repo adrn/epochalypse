@@ -250,6 +250,32 @@ def test_census_definitions():
     )
 
 
+def test_min_snr_selection():
+    """`--min-snr` must use the generator's ALL-companions rule, not any."""
+    from epochalypse.harv.unit import passes_snr
+
+    check(
+        "one companion: a simple threshold",
+        passes_snr({"snr_total_1": 7.0}, "1_companion", 5.0)
+        and not passes_snr({"snr_total_1": 4.9}, "1_companion", 5.0),
+    )
+    check(
+        "two companions: EVERY one must clear it, not just one",
+        not passes_snr({"snr_total_1": 900.0, "snr_total_2": 1.0}, "2_companion", 5.0)
+        and passes_snr({"snr_total_1": 6.0, "snr_total_2": 5.0}, "2_companion", 5.0),
+        "same rule as sources.select_high_snr and census.high_snr_mask",
+    )
+    check(
+        "a non-finite SNR never passes",
+        not passes_snr({"snr_total_1": np.nan}, "1_companion", 5.0),
+    )
+    check(
+        "the control never passes -- it has no companion to have SNR",
+        not passes_snr({}, "0_companion", 5.0),
+        "--min-snr means spend the budget where there is signal",
+    )
+
+
 def test_stride_partitions():
     """A striding bug silently drops or duplicates work, so assert the partition."""
     from epochalypse import mpi

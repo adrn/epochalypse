@@ -4,7 +4,7 @@
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=96
 #SBATCH --exclusive
-#SBATCH -t 2:00:00
+#SBATCH -t 4:00:00
 #SBATCH -p cca
 #SBATCH -C genoa
 
@@ -18,9 +18,32 @@
 #   python scripts/benchmarks/sweep_summary.py <roots> # compares them
 #
 # Arguments (all optional after the first):
-#   $1  sigma_a0 in AU at P0        (required)
-#   $2  systems per population      (default 20000)
-#   $3  prior library size          (default 100000)
+#   $1  sigma_a0 in AU at P0            (required)
+#   $2  HIGH-SNR systems per population (default 2000)
+#   $3  prior library size              (default 1000000, the production value)
+#
+# ==========================================================================
+# WHY IT RUNS AT THE PRODUCTION LIBRARY SIZE
+# ==========================================================================
+# A cheaper library would confound the two effects this is trying to separate.
+# At M=1e5 a system can rail because the library never found its orbit, which
+# looks identical to railing because the amplitude prior made the null cheaper.
+# Only at the production M does a rail mean what the sweep needs it to mean.
+#
+# That is affordable because the sweep spends its budget on the systems that
+# carry the signal instead of a random draw:
+#
+#   * --populations 1_companion. The control cannot inform a rail-vs-SNR curve.
+#   * --min-snr. Only 6.9% of the catalog is high-SNR, and the cliff lives in
+#     SNR 5-20, so a random subsample wastes ~93% of its fits.
+#
+# 2,000 high-SNR systems per arm, four arms:
+#
+#     M=1e6      56 core-h,  ~9 min on one genoa node
+#     M=1e7     502 core-h,  ~1.3 h  on one genoa node
+#
+# M=1e7 needs ~7.5 GB/rank -- 722 GB of a 1.5 TB node at 96 ranks. It fits, but
+# confirm with scripts/benchmarks/bench_harv.sh before running four arms of it.
 #
 # ==========================================================================
 # WHY THIS SWEEP EXISTS
@@ -71,9 +94,10 @@
 # every arm needs its own --output-root. That is what $ROOT below is for.
 
 set -u
-SIGMA_A0=${1:?usage: sbatch scripts/benchmarks/sweep_sigma_a0.sh <sigma_a0 AU> [subsample] [M]}
-SUBSAMPLE=${2:-20000}
-N_PRIOR=${3:-100000}
+SIGMA_A0=${1:?usage: sbatch scripts/benchmarks/sweep_sigma_a0.sh <sigma_a0 AU> [n_high_snr] [M]}
+SUBSAMPLE=${2:-2000}
+N_PRIOR=${3:-1000000}
+MIN_SNR=${MIN_SNR:-5}
 
 cd /mnt/home/apricewhelan/work/epochalypse
 source .venv/bin/activate
@@ -86,16 +110,18 @@ export JAX_PLATFORMS=cpu
 export XLA_FLAGS="--xla_cpu_multi_thread_eigen=false"
 
 ROOT=${SWEEP_ROOT:-$HARV_ROOT-sweeps}/a0-$SIGMA_A0
-echo "sigma_a0 = $SIGMA_A0 AU   subsample = $SUBSAMPLE   M = $N_PRIOR"
-echo "output   = $ROOT"
+echo "sigma_a0 = $SIGMA_A0 AU   high-SNR systems = $SUBSAMPLE   M = $N_PRIOR"
+echo "min_snr  = $MIN_SNR   output = $ROOT"
 
 date
 mpirun python scripts/harv_mpi.py --sigma-a0 $SIGMA_A0 --subsample $SUBSAMPLE \
     --n-prior-samples $N_PRIOR --n-parts 1 \
+    --populations 1_companion --min-snr $MIN_SNR \
     --catalog-root $OUT_ROOT --output-root $ROOT
 date
 
 # Each arm carries its own diagnostic, so a log is self-contained even before
 # sweep_summary.py puts the arms side by side.
-python scripts/harv_finish.py --output-root $ROOT --stages census recovery
+python scripts/harv_finish.py --output-root $ROOT --populations 1_companion \
+    --stages census recovery
 date

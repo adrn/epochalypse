@@ -62,6 +62,7 @@ def write_manifest(described, args, size):
         "output_root": str(C.OUTPUT_ROOT),
         "populations": list(args.populations),
         "subsample": C.SUBSAMPLE,
+        "min_snr": args.min_snr,
         "n_parts": args.n_parts,
         "library": described,
         "padding": {
@@ -148,6 +149,16 @@ def main(argv=None):
         "Use a separate --output-root per value",
     )
     parser.add_argument(
+        "--min-snr",
+        type=float,
+        default=None,
+        help="fit only systems where EVERY injected companion clears this "
+        "SNR_tot. Only 6.9%% of the catalog is high-SNR, so a calibration run "
+        "that only cares about detected systems otherwise spends 93%% of its "
+        "budget on ones that cannot inform it. Implies --populations without "
+        "0_companion, which has no companions and so no SNR",
+    )
+    parser.add_argument(
         "--limit", type=int, help="cap systems per unit (smoke tests only)"
     )
     parser.add_argument(
@@ -201,6 +212,7 @@ def main(argv=None):
                 f"seed {C.SEED}, {described['fingerprint']}"
             ),
             subsample=C.SUBSAMPLE if C.SUBSAMPLE is not None else "the full catalog",
+            min_snr=args.min_snr if args.min_snr is not None else "no cut",
         )
         write_manifest(described, args, size)
         print(f"wrote       : {C.manifest_path().name}\n", flush=True)
@@ -222,6 +234,7 @@ def main(argv=None):
                 prior_samples=prior_samples,
                 top_k=args.top_k,
                 limit=args.limit,
+                min_snr=args.min_snr,
                 skip_existing=args.skip_existing,
                 verbose=True,
                 # Rank 0 only: 2048 ranks at one line per 50 systems is a

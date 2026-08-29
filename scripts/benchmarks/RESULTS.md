@@ -216,8 +216,35 @@ which predicts the *direction*, not the magnitude. `scripts/benchmarks/sweep_sig
 measures the magnitude:
 
 ```bash
-zsh scripts/benchmarks/submit_all.sh sigma-a0    # 4 arms, ~50 min, ~4 node-hours
+zsh scripts/benchmarks/submit_all.sh sigma-a0    # 4 arms, ~9 min, ~56 core-hours
 zsh scripts/benchmarks/submit_all.sh sweep       # compare them
+```
+
+**It runs at the production library size, M = 10⁶**, and that is not optional: at
+M = 10⁵ a system can rail because the library never found its orbit, which is
+indistinguishable from railing because the prior made the null cheaper — the
+exact distinction being measured. It is affordable anyway because the sweep
+spends its budget where the signal is rather than on a random draw:
+
+| | share of the catalog |
+| --- | --- |
+| high-SNR (`--min-snr 5`) | 6.9% |
+| of those, the SNR 5–20 cliff region | 67% |
+
+So `--populations 1_companion --min-snr 5` — the control cannot inform a
+rail-vs-SNR curve, and a random subsample would spend ~93% of its fits on
+systems that cannot either. 2,000 high-SNR systems per arm:
+
+| M | core-h, 4 arms | wall, one genoa node |
+| --- | --- | --- |
+| 10⁶ | 56 | ~9 min |
+| 10⁷ | 502 | ~1.3 h |
+
+M = 10⁷ needs ~7.5 GB/rank, 722 GB of a 1.5 TB node at 96 ranks. It fits, but
+confirm with `bench_harv.sh` before running four arms of it:
+
+```bash
+sbatch -J sweep-a0-0.01 scripts/benchmarks/sweep_sigma_a0.sh 0.01 2000 10000000
 ```
 
 **The sweep exists rather than a single change because there is a real risk at

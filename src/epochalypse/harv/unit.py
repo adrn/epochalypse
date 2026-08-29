@@ -115,6 +115,26 @@ def _period_summary(period, weight):
     }
 
 
+def passes_snr(truth, population, min_snr):
+    """Every injected companion clears `min_snr` -- the generator's own rule.
+
+    The same "all companions, not any" test as `sources.select_high_snr` and
+    `census.high_snr_mask`, applied one truth row at a time so a unit can skip a
+    system before paying 25 s to fit it.
+
+    A control system has no companion and so no SNR, and returns False rather
+    than True: `--min-snr` means "spend the budget on systems with signal", and
+    silently fitting the whole control population would be the opposite.
+    """
+    n = C.POPULATIONS[population]
+    if not n:
+        return False
+    return all(
+        np.isfinite(truth[f"snr_total_{k}"]) and truth[f"snr_total_{k}"] >= min_snr
+        for k in range(1, n + 1)
+    )
+
+
 def run_unit(
     population,
     shard,
@@ -125,6 +145,7 @@ def run_unit(
     prior_samples=None,
     top_k=None,
     limit=None,
+    min_snr=None,
     skip_existing=False,
     progress_every=50,
     verbose=True,
@@ -170,11 +191,16 @@ def run_unit(
             SystemWriter(systems_path, population, shard, reader.truths) as systems,
             SampleWriter(samples_path, top_k) as samples,
         ):
-            for count, (index, truth, t, psi, pf, y, yerr) in enumerate(
-                reader.iter_systems(part, n_parts)
-            ):
+            # `limit` counts systems FITTED, not scanned: with --min-snr the two
+            # differ by ~15x, and a cap on scanned systems would silently return
+            # a fraction of what was asked for.
+            count = 0
+            for index, truth, t, psi, pf, y, yerr in reader.iter_systems(part, n_parts):
+                if min_snr is not None and not passes_snr(truth, population, min_snr):
+                    continue
                 if limit and count >= limit:
                     break
+                count += 1
                 gaia_source_id = truth["gaia_source_id"]
                 try:
                     record, columns = fit_system(
@@ -201,10 +227,10 @@ def run_unit(
                     continue
                 systems.add(index, record)
                 samples.add(gaia_source_id, index, columns)
-                if verbose and progress_every and (count + 1) % progress_every == 0:
-                    rate = (count + 1) / (time.time() - started)
+                if verbose and progress_every and count % progress_every == 0:
+                    rate = count / (time.time() - started)
                     print(
-                        f"[{population} {shard:05d}.{part}] {count + 1:,}/{n_unit:,} "
+                        f"[{population} {shard:05d}.{part}] {count:,}/{n_unit:,} "
                         f"({rate:.2f}/s)",
                         flush=True,
                     )
