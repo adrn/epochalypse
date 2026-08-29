@@ -13,11 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import config as _cat
+from .. import constants as _k
 from ..periodogram import config as _pg
 
 # Re-exported so every stage reads one authority as `config.X`.
 POPULATIONS = _cat.POPULATIONS
 PARQUET_COMPRESSION = _cat.PARQUET_COMPRESSION
+MJUP_IN_MSUN = _k.MJUP_IN_MSUN
 
 # ==========================================================================
 # The prior library
@@ -131,8 +133,49 @@ PERIOD_MAX_YR = 100.0  # ~18x the mission baseline
 SIGMA_PARALLAX_MAS = 100.0  # HalfNormal; catalog maxes at 74
 SIGMA_POS_MAS = 100.0  # reference-position offset; the catalog injects 0
 SIGMA_VTAN_KMS = 100.0  # tangential velocity; catalog maxes at 119
-SIGMA_A0_AU = 1.0  # semi-major axis at P0, scaling as (P/P0)^(2/3)
 P0_YR = 1.0
+
+# ==========================================================================
+# The orbit-amplitude prior, as a companion mass
+# ==========================================================================
+# This one is not a scale to tune -- it sets the DETECTION THRESHOLD. It is the
+# width of the Gaussian prior on the orbit's astrometric amplitude, so it fixes
+# the Occam penalty a real orbit pays against the no-orbit solution, and because
+# harv scales that width as (P/P0)^(2/3) x parallax the penalty grows with
+# period and so falls on real orbits and barely at all on the null.
+#
+# So it is expressed as the thing it physically is: the largest companion the
+# prior expects. At P0, for a companion of mass m around a star of mass M,
+#
+#     a0 = a * m/(M+m)   with   a = (M P0^2)^(1/3)     ->   ~ m / M^(2/3)
+#
+# which is `sigma_a0_au()` in `library`. harv's own scaling exists to keep the
+# prior "approximately constant in companion mass at fixed primary mass"; the
+# M^(2/3) factor completes it, so one number covers every star.
+#
+# PER SYSTEM, AND FREE. sigma_a0 touches only the analytically marginalized
+# Thiele-Innes priors, which are never drawn into the shared library -- it does
+# not change the library fingerprint, and measured over six systems with
+# different values it triggers no extra JIT compile.
+#
+# WHY 13: the deuterium-burning limit, the conventional planet/brown-dwarf
+# boundary. It is a Gaussian scale, not a cutoff -- the catalog injects up to
+# 51 M_Jup and 13 is only the 83rd percentile, so the most massive 17% sit
+# beyond 1 sigma and pay a mild Occam cost. The sweep says that trade is worth
+# taking (`scripts/benchmarks/RESULTS.md`).
+#
+# The sweep is EVIDENCE for this value, not its source: reading the argmax off a
+# recovery curve measured against injected answers is fitting to the truth, the
+# same objection that keeps the parallax prior uninformative. At the catalog's
+# median host mass of 0.41 Msun, 13 M_Jup gives sigma_a0 = 0.022 AU -- which
+# lands between the sweep's two best arms (0.01 and 0.03) without having been
+# chosen from them.
+M_MAX_MJUP = 13.0
+
+# Pin a constant sigma_a0 in AU, disabling the mass scaling above. `None` for
+# the per-system value. Only for sweeps, which vary a single constant across
+# arms -- `scripts/benchmarks/sweep_sigma_a0.sh`.
+SIGMA_A0_AU = None
 
 # ==========================================================================
 # The eccentricity prior

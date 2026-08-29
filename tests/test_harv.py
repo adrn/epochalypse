@@ -117,7 +117,7 @@ def test_padding_is_a_no_op():
     # Deliberately a *weak* system: a strong one puts all the weight on one
     # draw, and "the weights are unchanged" is then a claim about one number.
     t, psi, pf, y, yerr = fake_system(n_epochs=70, alpha=0.0, sigma=0.06, seed=3)
-    lib, prior = L.draw(N_LIB), L.prior()
+    lib, prior = L.draw(N_LIB), L.prior(m_star_msun=0.41)
 
     def fit(pad):
         from harv import RejectionSampler
@@ -182,7 +182,7 @@ def test_library_is_shareable():
 
     draws = [
         np.asarray(
-            L.prior(par)
+            L.prior(par, m_star_msun=0.41)
             .sample(jr.key(5), 500, model=L.model(par))
             .nonlinear["period"]
             .value
@@ -193,6 +193,17 @@ def test_library_is_shareable():
         "the prior does not depend on the per-system floor",
         np.array_equal(draws[0], draws[1]) and np.array_equal(draws[0], draws[2]),
         "500 period draws bit-identical across three parameterizations",
+    )
+    a = L.fingerprint(L.draw(500))
+    try:
+        C.SIGMA_A0_AU = 1e-6
+        b = L.fingerprint(L.draw(500))
+    finally:
+        C.SIGMA_A0_AU = None
+    check(
+        "and not on sigma_a0 either -- the TI priors are marginalized, never drawn",
+        a == b,
+        "which is why `draw` can pass any host mass",
     )
     check(
         "the library is reproducible from the seed alone",
@@ -300,8 +311,9 @@ def test_stride_partitions():
 
 def test_fit_system():
     arrays = fake_system(n_epochs=90, period=1.7, alpha=1.5, seed=4)
-    lib, prior = L.draw(N_LIB), L.prior()
+    lib, prior = L.draw(N_LIB), L.prior(m_star_msun=0.41)
     kw = {"prior": prior, "prior_samples": lib, "top_k": K}
+    del prior  # the dict holds it; fit_system also accepts m_star_msun instead
 
     record, columns = unit.fit_system(*arrays, seed=1234, **kw)
     _, columns2 = unit.fit_system(*arrays, seed=1234, **kw)
@@ -390,6 +402,45 @@ def test_x64_is_on():
     )
 
 
+def test_amplitude_prior_from_host_mass():
+    """sigma_a0 as a companion-mass ceiling, scaled by each host."""
+    check(
+        "a0 = m / M^(2/3): the Sun-like case checks against a hand calculation",
+        np.isclose(L.sigma_a0_au(1.0), C.M_MAX_MJUP * C.MJUP_IN_MSUN, rtol=1e-12),
+        f"{C.M_MAX_MJUP:g} MJup at 1 Msun -> {L.sigma_a0_au(1.0):.4f} AU",
+    )
+    check(
+        "a lighter host gets a WIDER prior for the same companion mass",
+        L.sigma_a0_au(0.41) > L.sigma_a0_au(1.0),
+        f"0.41 Msun -> {L.sigma_a0_au(0.41):.4f} AU vs 1.0 Msun -> {L.sigma_a0_au(1.0):.4f}",
+    )
+    try:
+        C.SIGMA_A0_AU = 0.03
+        check(
+            "pinning a constant overrides the mass scaling",
+            L.sigma_a0_au(0.41) == 0.03 and L.sigma_a0_au(999.0) == 0.03,
+            "which is what a sweep varies",
+        )
+    finally:
+        C.SIGMA_A0_AU = None
+    try:
+        L.sigma_a0_au()
+        raise AssertionError("should have raised")
+    except ValueError as error:
+        check(
+            "no host mass and no pin raises rather than guessing",
+            "m_star_msun" in str(error),
+        )
+    # the prior must actually USE it, not merely compute it
+    light = L.prior(m_star_msun=0.2).linear_priors["ti_A"]
+    heavy = L.prior(m_star_msun=1.0).linear_priors["ti_A"]
+    check(
+        "and the prior object differs between two hosts",
+        float(light.sigma_a0.value) != float(heavy.sigma_a0.value),
+        f"{float(light.sigma_a0.value):.4f} vs {float(heavy.sigma_a0.value):.4f} AU",
+    )
+
+
 def test_sample_units():
     """The manifest is written before the first fit, so its units are hard-coded.
 
@@ -399,7 +450,9 @@ def test_sample_units():
 
     arrays = fake_system(n_epochs=90, seed=6)
     data, par, _ = adapt.prepare(*arrays)
-    sampler = RejectionSampler(L.prior(), L.model(par), batch_size=C.BATCH_SIZE)
+    sampler = RejectionSampler(
+        L.prior(m_star_msun=0.41), L.model(par), batch_size=C.BATCH_SIZE
+    )
     samples = sampler.run_with_samples(data, L.draw(N_LIB), top_k=K, seed=1)
 
     stored = {**samples.nonlinear, **samples.linear}

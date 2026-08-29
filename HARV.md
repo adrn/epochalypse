@@ -212,7 +212,29 @@ prior on the Thiele-Innes constants is **not** the Campbell prior, and harv warn
 that the marginal likelihood can then be dominated by spurious long-period
 solutions where the orbit is absorbed into proper motion.
 
-**The scale priors are deliberately uninformative** — `sigma_parallax = 100 mas`
+**The orbit-amplitude prior is a companion mass, not a tuned scale.**
+`M_MAX_MJUP = 13` — the deuterium-burning limit — converted per system to
+`sigma_a0 = m_max / M_star^(2/3)`, because at the reference period a companion
+of mass `m` around a star of mass `M` displaces the photocentre by
+`a = m/M^(2/3)`. harv's own `(P/P₀)^(2/3) × ϖ` scaling exists to keep the prior
+constant in companion mass at *fixed* primary mass; the `M^(2/3)` removes the
+"fixed".
+
+This matters more than a prior width usually does, because it **sets the
+detection threshold**: it fixes the Occam penalty a real orbit pays against the
+no-orbit solution, and since the width grows with period that penalty falls on
+real orbits and barely at all on the null. At the old `sigma_a0 = 1.0 AU` —
+~4,900× the median injected `a0` — the effective threshold sat near SNR 15–20
+against a `HIGH_SNR_MIN` of 5, and half the SNR 5–10 systems returned no
+detection at all. See `scripts/benchmarks/RESULTS.md`.
+
+The sweep there is *evidence* for 13 M_Jup, not its source: reading the argmax
+off a recovery curve measured against injected answers is fitting to the truth.
+It is free to compute per system — `sigma_a0` shapes only the analytically
+marginalized Thiele-Innes priors, so it changes neither the shared library nor
+the JIT cache.
+
+**The remaining scale priors are deliberately uninformative** — `sigma_parallax = 100 mas`
 against a catalog that maxes at 74, and not centered on the catalog's own
 parallax and proper motion. Centering on them is measurably better (period error
 2.63% → 0.2%), and it is also cheating: the catalog's values are the ones the

@@ -91,8 +91,39 @@ def eccentricity_prior():
     return dist.TruncatedNormal(C.ECC_LOC, C.ECC_SCALE, low=0.0, high=1.0)
 
 
-def prior(par=None):
-    """The single catalog-wide prior, from the constants in `config`."""
+def sigma_a0_au(m_star_msun=None):
+    """The orbit-amplitude prior scale, as the largest companion it expects.
+
+    At the reference period, a companion of mass `m` around a star of mass `M`
+    displaces the photocentre by `a0 = a m/(M+m)` with `a = (M P0^2)^(1/3)`,
+    which for `m << M` is `m / M^(2/3)`. So one companion-mass ceiling
+    (`config.M_MAX_MJUP`) gives the right scale for every star, which is what
+    harv's own `(P/P0)^(2/3) x parallax` scaling is reaching for -- it keeps the
+    prior constant in companion mass at *fixed* primary mass, and the `M^(2/3)`
+    here removes the "fixed" part.
+
+    `config.SIGMA_A0_AU` pins a constant instead, for sweeps.
+    """
+    if C.SIGMA_A0_AU is not None:
+        return float(C.SIGMA_A0_AU)
+    if m_star_msun is None:
+        msg = (
+            "sigma_a0 is derived per system from the host mass; pass "
+            "m_star_msun, or pin config.SIGMA_A0_AU to a constant"
+        )
+        raise ValueError(msg)
+    m_max = C.M_MAX_MJUP * C.MJUP_IN_MSUN
+    return m_max / float(m_star_msun) ** (2.0 / 3.0)
+
+
+def prior(par=None, m_star_msun=None):
+    """The catalog-wide prior, with the amplitude scale set from the host mass.
+
+    Everything except `sigma_a0` is a catalog constant. `sigma_a0` is per system
+    and costs nothing: it shapes only the analytically marginalized Thiele-Innes
+    priors, which are never drawn into the shared library, so it changes neither
+    the fingerprint nor the JIT cache.
+    """
     par = parameterization() if par is None else par
     return par.default_prior(
         eccentricity=eccentricity_prior(),
@@ -101,7 +132,7 @@ def prior(par=None):
         sigma_pos=Q(C.SIGMA_POS_MAS, "mas"),
         sigma_vtan=Q(C.SIGMA_VTAN_KMS, "km/s"),
         sigma_parallax=Q(C.SIGMA_PARALLAX_MAS, "mas"),
-        sigma_a0=Q(C.SIGMA_A0_AU, "AU"),
+        sigma_a0=Q(sigma_a0_au(m_star_msun), "AU"),
         P0=Q(C.P0_YR, "yr"),
     )
 
@@ -122,7 +153,11 @@ def draw(n=None, seed=None):
     n = C.N_PRIOR_SAMPLES if n is None else int(n)
     seed = C.SEED if seed is None else int(seed)
     par = parameterization()
-    return prior(par).sample(jr.key(seed), n, model=model(par))
+    # The host mass here is arbitrary and the draws do not depend on it: it only
+    # sets `sigma_a0`, which shapes the four Thiele-Innes priors, and those are
+    # analytically marginalized rather than sampled. `tests/test_harv.py` asserts
+    # the library is bit-identical across host masses rather than trusting this.
+    return prior(par, m_star_msun=1.0).sample(jr.key(seed), n, model=model(par))
 
 
 def fingerprint(library):
@@ -159,7 +194,8 @@ def describe(library=None):
         "sigma_parallax_mas": C.SIGMA_PARALLAX_MAS,
         "sigma_pos_mas": C.SIGMA_POS_MAS,
         "sigma_vtan_kms": C.SIGMA_VTAN_KMS,
-        "sigma_a0_au": C.SIGMA_A0_AU,
+        "m_max_mjup": C.M_MAX_MJUP,
+        "sigma_a0_au": C.SIGMA_A0_AU,  # None -> derived per system from the host mass
         "p0_yr": C.P0_YR,
         # Not harv's default -- a run's fingerprint changes with it, and a
         # recovery number is not comparable across two different ones.

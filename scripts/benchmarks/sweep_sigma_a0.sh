@@ -51,6 +51,12 @@
 # first arm to finish settles it. If it comes back near 15 GB/rank, resubmit the
 # rest with --ntasks-per-node=64.
 #
+# NOTE: --sigma-a0 PINS a constant, disabling the per-system scaling that
+# production uses (config.M_MAX_MJUP / M_star^(2/3), see harv/config.py). That
+# is deliberate: a sweep needs one number per arm. To sweep the production
+# parameterization instead, vary --m-max-mjup -- 13 MJup at the catalog's median
+# host of 0.41 Msun is sigma_a0 = 0.022 AU, between this sweep's two best arms.
+#
 # ==========================================================================
 # WHY THIS SWEEP EXISTS
 # ==========================================================================

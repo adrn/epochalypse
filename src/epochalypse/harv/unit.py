@@ -44,13 +44,30 @@ warnings.filterwarnings(
 )
 
 
-def fit_system(t, psi, pf, y, yerr, *, prior, prior_samples, seed, top_k=None):
+def fit_system(
+    t,
+    psi,
+    pf,
+    y,
+    yerr,
+    *,
+    prior_samples,
+    seed,
+    prior=None,
+    m_star_msun=None,
+    top_k=None,
+):
     """Fit one system. Returns `(record_without_ids, {param: (top_k,) array})`.
 
-    The sampler is rebuilt per system because the parameterization is: its
-    `a_floor` is `med(sigma_AL)/sqrt(N)` from this star's own uncertainties. The
-    *prior* and the *library* are not rebuilt -- they are the catalog-wide ones,
-    which is what makes 17.2 M posteriors comparable.
+    The sampler is rebuilt per system because two of its pieces are: the
+    parameterization's `a_floor` is `med(sigma_AL)/sqrt(N)` from this star's own
+    uncertainties, and the prior's `sigma_a0` is the companion-mass ceiling
+    scaled by this star's mass. Neither costs a JIT compile, and neither touches
+    the *library*, which stays the catalog-wide one -- that is what makes 17.2 M
+    posteriors comparable.
+
+    Pass `prior` to override, which is what a sweep over a constant `sigma_a0`
+    does; otherwise it is built here from `m_star_msun`.
     """
     from harv import RejectionSampler
 
@@ -58,6 +75,8 @@ def fit_system(t, psi, pf, y, yerr, *, prior, prior_samples, seed, top_k=None):
     data, par, n_epochs = adapt.prepare(t, psi, pf, y, yerr)
     n_padded = len(data.time)
 
+    if prior is None:
+        prior = L.prior(m_star_msun=m_star_msun)
     sampler = RejectionSampler(prior, L.model(par), batch_size=C.BATCH_SIZE)
     samples = sampler.run_with_samples(data, prior_samples, top_k=top_k, seed=seed)
 
@@ -181,7 +200,9 @@ def run_unit(
         limit = C.limit_per_shard(n_shards * n_parts)
     if prior_samples is None:
         prior_samples = L.draw()
-    prior = L.prior()
+    # Only when a constant is pinned (a sweep) is one prior good for every
+    # system; otherwise it is built per system from the host mass.
+    prior = L.prior() if C.SIGMA_A0_AU is not None else None
 
     started = time.time()
     failures = []
@@ -212,6 +233,7 @@ def run_unit(
                         prior=prior,
                         prior_samples=prior_samples,
                         seed=system_seed(C.SEED, population, gaia_source_id),
+                        m_star_msun=truth["mass_st_msun"],
                         top_k=top_k,
                     )
                 except Exception as error:

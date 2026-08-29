@@ -140,16 +140,24 @@ def main(argv=None):
         help=f"samples kept per system (default {C.TOP_K})",
     )
     parser.add_argument(
+        "--m-max-mjup",
+        type=float,
+        default=None,
+        help=f"largest companion the orbit-amplitude prior expects, in Jupiter "
+        f"masses (default {C.M_MAX_MJUP:g}). Converted per system to a "
+        f"sigma_a0 of m_max / M_star^(2/3), so one number covers every host. "
+        "This sets the DETECTION THRESHOLD -- a wider prior means a larger Occam "
+        "penalty on a real orbit relative to the no-orbit solution",
+    )
+    parser.add_argument(
         "--sigma-a0",
         type=float,
         default=None,
-        help=f"orbit-amplitude prior scale in AU at P0 (default {C.SIGMA_A0_AU}). "
-        "This sets the detection threshold -- a wider prior means a larger Occam "
-        "penalty on a real orbit relative to the no-orbit solution -- so sweep it "
-        "on a subsample rather than guessing. Recorded in the manifest, but it "
-        "does NOT change the library fingerprint: it only affects the "
-        "analytically marginalized Thiele-Innes priors, which are never drawn. "
-        "Use a separate --output-root per value",
+        help="pin sigma_a0 to a constant in AU, DISABLING the per-system mass "
+        "scaling. Only for sweeps, which vary one constant across arms. Recorded "
+        "in the manifest, but it does not change the library fingerprint -- it "
+        "affects only the analytically marginalized Thiele-Innes priors, which "
+        "are never drawn -- so give each arm its own --output-root",
     )
     parser.add_argument(
         "--min-snr",
@@ -191,6 +199,8 @@ def main(argv=None):
         C.TOP_K = args.top_k
     if args.sigma_a0 is not None:
         C.SIGMA_A0_AU = args.sigma_a0
+    if args.m_max_mjup is not None:
+        C.M_MAX_MJUP = args.m_max_mjup
 
     units = work_units(args.populations, args.n_parts)
     if args.max_units:
@@ -213,6 +223,11 @@ def main(argv=None):
             library=(
                 f"{C.N_PRIOR_SAMPLES:,} prior samples, top {C.TOP_K}, "
                 f"seed {C.SEED}, {described['fingerprint']}"
+            ),
+            amplitude=(
+                f"sigma_a0 pinned at {C.SIGMA_A0_AU} AU"
+                if C.SIGMA_A0_AU is not None
+                else f"m_max = {C.M_MAX_MJUP:g} MJup, per-system from the host mass"
             ),
             subsample=C.SUBSAMPLE if C.SUBSAMPLE is not None else "the full catalog",
             min_snr=args.min_snr if args.min_snr is not None else "no cut",

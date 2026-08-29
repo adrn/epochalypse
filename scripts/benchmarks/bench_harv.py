@@ -65,6 +65,12 @@ def main(argv=None):
     parser.add_argument("--n-prior-samples", type=int, default=None)
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument(
+        "--sigma-a0",
+        type=float,
+        default=None,
+        help="pin sigma_a0 rather than deriving it from each host's mass",
+    )
     args = parser.parse_args(argv)
 
     comm, rank, size = mpi.mpi_context()
@@ -76,6 +82,8 @@ def main(argv=None):
         C.TOP_K = args.top_k
     if args.batch_size is not None:
         C.BATCH_SIZE = args.batch_size
+    if args.sigma_a0 is not None:
+        C.SIGMA_A0_AU = args.sigma_a0
 
     # Every rank under `mpirun` believes it is rank 0 of 1 when mpi4py is
     # missing, which silently turns a contention measurement into N copies of
@@ -108,7 +116,8 @@ def main(argv=None):
     started = time.time()
     prior_samples = L.draw()
     library_seconds = time.time() - started
-    prior = L.prior()
+    # Per system unless pinned, exactly as production does it.
+    prior = L.prior() if C.SIGMA_A0_AU is not None else None
 
     timings, buckets = [], []
     with ShardReader(args.population, args.shard, n_shards) as reader:
@@ -118,7 +127,15 @@ def main(argv=None):
                 break
             t0 = time.time()
             record, _ = fit_system(
-                t, psi, pf, y, yerr, prior=prior, prior_samples=prior_samples, seed=1
+                t,
+                psi,
+                pf,
+                y,
+                yerr,
+                prior=prior,
+                prior_samples=prior_samples,
+                seed=1,
+                m_star_msun=truth["mass_st_msun"],
             )
             elapsed = time.time() - t0
             timings.append(elapsed)
