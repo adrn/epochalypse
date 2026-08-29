@@ -15,12 +15,16 @@ Stages:
   recovery period recovery binned by injected period and eccentricity -- the
            two things that actually limit it, and the breakdown that tells you
            whether a low number is the data's fault or the prior's
-  figures  four diagnostic PNGs -- see epochalypse.harv.figures for what each
-           one answers and the order to read them in
+  figures  six diagnostic PNGs -- see epochalypse.harv.figures for what each
+           one answers and the order to read them in. harv_amplitude is the one
+           that says whether the amplitude PRIOR, rather than the data, is
+           setting the detection threshold
   gallery  per-system diagnostics -- the data, the model and the posterior
-           samples for a few systems from each (SNR, period) cell. Needs
-           --catalog-root, because it reads the epochs. Start with the
-           0.79-1.26 yr cells: a one-year orbit is degenerate with parallax
+           samples for a few systems from each (SNR, period) cell, stratified
+           across recovered / railed / wrong-period so the failures are always
+           represented. Needs --catalog-root, because it reads the epochs.
+           Start with the 0.79-1.26 yr cells: a one-year orbit is degenerate
+           with parallax
   merge    each population's per-system shards -> one parquet
 
 **The samples are never merged.** They are ~850 GB across the catalog; read them

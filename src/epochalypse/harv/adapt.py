@@ -121,3 +121,55 @@ def prepare(t, psi, pf, y, yerr):
         parameterization(to_harv(t, psi, pf, y, yerr, pad=False)),
         len(t),
     )
+
+
+def real_rows(yerr):
+    """Which rows are real epochs and which are padding.
+
+    Padding is identified by its uncertainty rather than by an epoch count, so
+    a caller that only has the arrays -- a figure reading `data.al_position_err`
+    back out of a `GaiaAstrometryData` -- needs nothing else to strip it.
+    """
+    return np.asarray(yerr, dtype=np.float64) < PAD_ERR_MAS / 2
+
+
+def chi2(residual, yerr):
+    """`sum((residual/sigma)^2)` over the real epochs only.
+
+    Padded rows carry `PAD_ERR_MAS`, so including them would add ~1e-12 per row
+    -- harmless, but it also makes the per-system value depend on which bucket
+    the system landed in, which is exactly the comparability `pad_log_offset`
+    exists to protect.
+    """
+    keep = real_rows(yerr)
+    r = np.asarray(residual, dtype=np.float64)[keep]
+    s = np.asarray(yerr, dtype=np.float64)[keep]
+    return float(np.sum((r / s) ** 2))
+
+
+def linear_solution(design, al, yerr, n_columns=None):
+    """Best-fit linear parameters at fixed orbit: weighted least squares.
+
+    With `n_columns=5` this is the **no-orbit** solution -- the first five
+    columns of harv's design matrix (`ra0`, `dec0`, `pmra`, `pmdec`, `parallax`)
+    do not depend on the nonlinear orbital parameters, so a companion has to beat
+    it. With all nine it is the best orbit fit at that period, eccentricity and
+    phase.
+
+    `chi2_null - chi2_best` between the two is then a proper likelihood ratio:
+    nested models, both at their own maximum, so the difference is >= 0 always
+    and a violation means the design matrix or the padding mask is wrong.
+
+    **Both sides must be maxima.** harv returns the marginalized linear
+    parameters as a *draw* from their conditional Gaussian, not as its mean
+    (`use_mean=False`), so scoring the drawn theta against a least-squares null
+    compares a posterior sample with an optimum and can make a real orbit look
+    worse than no orbit at all. That is not a small effect: on a railed system it
+    produced a delta chi-square of -13.
+    """
+    keep = real_rows(yerr)
+    a = np.asarray(design, dtype=np.float64)[keep, : n_columns or None]
+    b = np.asarray(al, dtype=np.float64)[keep]
+    s = np.asarray(yerr, dtype=np.float64)[keep]
+    theta, *_ = np.linalg.lstsq(a / s[:, None], b / s, rcond=None)
+    return theta, float(np.sum(((b - a @ theta) / s) ** 2))

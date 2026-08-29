@@ -283,6 +283,13 @@ SAMPLE_DTYPE = "float32"
 GALLERY_PER_BIN = 8
 GALLERY_LOG_PERIOD_BINS = (-2.0, -1.0, -0.5, -0.1, 0.1, 0.5, 1.0, 2.0)
 
+# How much posterior mass a gallery panel draws as *posterior*. With ess ~ 1-8
+# only a handful of the TOP_K draws carry any weight at all; the rest are prior
+# draws that happened to rank highest, and drawing them like solutions is what
+# made the old panels ~99.7% a picture of the prior. Everything outside this
+# fraction is drawn as faint grey coverage instead.
+GALLERY_WEIGHT_MASS = 0.999
+
 # ==========================================================================
 # Subsampling
 # ==========================================================================

@@ -3,19 +3,25 @@
 The population figures say *how often* the fit works. They cannot say *what
 happens* when it does not, and for that you have to look at individual systems.
 This picks a representative handful -- `config.GALLERY_PER_BIN` from each cell
-of a 2-D grid in (SNR, injected period) -- and draws four panels each.
+of a 2-D grid in (SNR, injected period) -- and draws six panels each.
 
 **Start with the 0.79-1.26 yr cells.** A one-year orbit is degenerate with
 parallax, because parallax is a free linear parameter in the model with a
 deliberately broad prior, so the same along-scan signal can be attributed to
 either. If that degeneracy is real, those systems' posteriors are **bimodal**:
 one mode with a companion and a small parallax, one with no companion and an
-inflated parallax. Panel (c) is drawn to show exactly that.
+inflated parallax. Panels (c) and (d) are drawn to show exactly that.
 
-The model is reconstructed with harv's own `_base_design_matrix`, not a
-reimplementation of the Thiele-Innes projection -- so `AL = X @ theta` for the
-nine linear parameters stored beside each sample, and the orbit is the last four
-columns. A reimplementation would be a second thing to keep correct.
+**The samples are weighted, and almost none of them count.** `TOP_K` keeps 1024
+draws by *rank*, not by merit, so at `ess ~ 1-8` a handful carry the mass and the
+rest are prior draws that happened to rank highest. Drawing them all alike is why
+these panels used to be a picture of the prior -- see `weights()`.
+
+The model is reconstructed with harv's own `_base_design_matrix` via
+`library.design_matrix`, not a reimplementation of the Thiele-Innes projection --
+so `AL = X @ theta` for the nine linear parameters stored beside each sample, and
+the orbit is the last four columns. A reimplementation would be a second thing to
+keep correct.
 """
 
 from __future__ import annotations
@@ -33,20 +39,89 @@ from . import library as L
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# The nine linear parameters, in the column order `_base_design_matrix` returns.
-LINEAR = ("ra0", "dec0", "pmra", "pmdec", "parallax", "ti_A", "ti_B", "ti_F", "ti_G")
+ORBIT = "#C2185B"
+PARALLAX = "#0288D1"
 
 
-def semi_major_axis_mas(ti_a, ti_b, ti_f, ti_g):
-    """`a0` from the Thiele-Innes constants (Halbwachs & Pourbaix identity).
+def weights(block, mass=None):
+    """Importance weights and the posterior/prior split, **from the logs**.
 
-    `u = (A^2+B^2+F^2+G^2)/2`, `v = AG - BF`, `a0 = sqrt(u + sqrt(u^2 - v^2))`.
-    The same identity harv uses in its Jacobian correction, so the amplitude
-    plotted here is the one the prior and the correction act on.
+    harv's weight is `exp(ln_likelihood - (logZ_int + ln M))`, normalized over
+    the whole prior library. `ln_prior` is not in it -- the library is drawn
+    *from* the prior, so a prior draw's importance weight is the likelihood
+    alone, and adding the prior back would double-count.
+
+    Recomputing it from the stored `ln_likelihood` rather than reading a stored
+    `weight` column is what makes these panels honest. A strong detection spans
+    ~1e-130 in weight: at `SAMPLE_DTYPE = float32` that carries no information
+    below ~1e-38 and stores as exactly 0.0 below ~1e-45, so a stored weight
+    column has a hard floor that has nothing to do with the posterior. The logs
+    never underflow. (It also works unchanged on output from before the weight
+    column was dropped, because `ln_likelihood` was always stored.)
+
+    Returns `(w, keep)`: `w` normalized so the best draw is 1.0 -- an absolute
+    normalization would be meaningless here anyway, since the denominator runs
+    over a library these 1024 rows are a tail of -- and `keep` the draws inside
+    `config.GALLERY_WEIGHT_MASS` of the total mass. The rest are **prior draws,
+    not bad fits**, and belong in the background.
+
+    Sorted here rather than trusting harv's descending top-K order: two lines,
+    and it takes a cross-package assumption out of every panel. `test_harv.py`
+    asserts the ordering separately, which is where a harv change should surface.
     """
-    u = 0.5 * (ti_a**2 + ti_b**2 + ti_f**2 + ti_g**2)
-    v = ti_a * ti_g - ti_b * ti_f
-    return np.sqrt(u + np.sqrt(np.maximum(u * u - v * v, 0.0)))
+    lnw = np.asarray(block["ln_likelihood"], dtype=np.float64)
+    finite = np.isfinite(lnw)
+    w = np.zeros_like(lnw)
+    if not finite.any():
+        return w, finite
+    w[finite] = np.exp(lnw[finite] - lnw[finite].max())
+
+    mass = C.GALLERY_WEIGHT_MASS if mass is None else float(mass)
+    order = np.argsort(w)[::-1]
+    cumulative = np.empty_like(w)
+    cumulative[order] = np.cumsum(w[order])
+    # `cumulative - w` is the mass ahead of each draw, so the draw that crosses
+    # the threshold is kept rather than being the first one dropped.
+    return w, finite & ((cumulative - w) < mass * w.sum())
+
+
+def _weighted_scatter(ax, x, y, w, keep):
+    """Draw weighted samples so the posterior is visible on top of the prior.
+
+    Three encodings of the same number, because one is not enough at this
+    dynamic range: color is `ln(w/w_best)` -- nats of likelihood below the best
+    fit, which is interpretable in a way that `log10 weight` normalized over an
+    unseen 10^6-sample library is not -- and size and opacity both track the
+    weight, so a draw carrying 1% of the mass cannot look like one carrying 90%.
+    Heavy draws are plotted last so they land on top.
+    """
+    if (~keep).any():
+        ax.scatter(
+            x[~keep],
+            y[~keep],
+            s=3,
+            color="0.82",
+            lw=0,
+            zorder=1,
+            label=f"{int((~keep).sum())} prior draws "
+            f"(<{1 - C.GALLERY_WEIGHT_MASS:.1%} of the mass)",
+        )
+    order = np.argsort(w[keep])
+    rel = w[keep][order]
+    with np.errstate(divide="ignore"):
+        shade = np.log(rel)
+    return ax.scatter(
+        x[keep][order],
+        y[keep][order],
+        c=shade,
+        s=8 + 62 * rel,
+        alpha=0.35 + 0.65 * rel,
+        vmin=min(float(np.min(shade)), -1.0),
+        vmax=0.0,
+        cmap="viridis",
+        lw=0,
+        zorder=2,
+    )
 
 
 def _cells(frame):
@@ -67,12 +142,25 @@ def _cells(frame):
 def select(population="1_companion", per_bin=None, high_snr=True):
     """`per_bin` systems from every populated (SNR, period) cell.
 
-    Deterministic -- systems are taken in `gaia_source_id` order -- so the same
-    catalog always yields the same gallery and a figure can be compared across
-    runs.
+    **Stratified by outcome within each cell**, round-robin across recovered /
+    railed / wrong-period, falling back to whatever is present when a category is
+    empty. Taking the first eight in `gaia_source_id` order instead means a cell
+    at 90% recovery shows eight successes and teaches nothing -- and the failures
+    are the reason the gallery exists.
+
+    Deterministic within each category, so the same catalog always yields the
+    same gallery and a figure can be compared across runs.
     """
     per_bin = C.GALLERY_PER_BIN if per_bin is None else int(per_bin)
-    extra = ("shard", "shard_row", "gaia_source_id", "parallax_mas", "n_epochs")
+    extra = (
+        "shard",
+        "shard_row",
+        "gaia_source_id",
+        "parallax_mas",
+        "mass_st_msun",
+        "n_epochs",
+        "n_padded",
+    )
     n = C.POPULATIONS[population]
     columns = census.system_columns(population, extra) + [
         f"alpha_mas_{k}" for k in range(1, n + 1)
@@ -91,67 +179,96 @@ def select(population="1_companion", per_bin=None, high_snr=True):
     ]
     frame = frame.copy()
     frame["cell"] = _cells(frame)
+    frame["outcome"] = np.where(
+        frame["recovered"],
+        "recovered",
+        np.where(frame["railed"], "railed", "wrong period"),
+    )
+    frame = frame.sort_values("gaia_source_id")
+    # rank within (cell, outcome), then order by rank first: that interleaves the
+    # categories, so `head(per_bin)` deals one of each before a second of any.
+    frame["_rank"] = frame.groupby(["cell", "outcome"], observed=True).cumcount()
     return (
-        frame.sort_values("gaia_source_id")
+        frame.sort_values(["cell", "_rank", "outcome"])
         .groupby("cell", observed=True)
         .head(per_bin)
+        .drop(columns="_rank")
         .reset_index(drop=True)
     )
 
 
-def _model_al(data, model, block, index):
-    """`(design matrix, theta)` for one stored draw, via harv's own model."""
-    from unxt import Quantity as Q
-
-    nl = {
-        # period keeps its unit (it is a time); the other two must be bare, as
-        # `_solve_kepler` strips only the mean anomaly before the Kepler solve
-        "period": Q(float(np.asarray(block["period"])[index]), "yr"),
-        "eccentricity": float(np.asarray(block["eccentricity"])[index]),
-        "phase_peri": float(np.asarray(block["phase_peri"])[index]),
-    }
-    theta = np.array([float(np.asarray(block[name])[index]) for name in LINEAR])
-    return np.asarray(model._base_design_matrix(nl, data)), theta
-
-
 def plot_system(row, block, arrays, out_dir):
-    """Four panels for one system: the data, and where the posterior went."""
+    """Six panels for one system: the data, the fit, and where the posterior went."""
     t, psi, pf, y, yerr = arrays
     data, par, n_epochs = adapt.prepare(t, psi, pf, y, yerr)
     model = L.model(par)
 
-    weight = np.asarray(block["weight"], float)
+    w, keep = weights(block)
     period = np.asarray(block["period"], float)
     parallax = np.asarray(block["parallax"], float)
-    a0 = semi_major_axis_mas(*(np.asarray(block[f"ti_{c}"], float) for c in "ABFG"))
-    best = int(np.argmax(weight))
+    a0 = L.semi_major_axis_mas(*(np.asarray(block[f"ti_{c}"], float) for c in "ABFG"))
+    best = int(np.argmax(w))
 
-    X, theta = _model_al(data, model, block, best)
-    al = np.asarray(data.al_position.value)
-    err = np.asarray(data.al_position_err.value)
-    real = err < adapt.PAD_ERR_MAS / 2  # drop the padded rows
-    t_yr = np.asarray(data.time.value) - float(data.t_ref.value)
-    astrometric = X[:, :5] @ theta[:5]  # the five-parameter solution
-    orbit = X[:, 5:] @ theta[5:]  # the companion's own contribution
+    design = L.design_matrix(
+        model,
+        data,
+        period[best],
+        block["eccentricity"][best],
+        block["phase_peri"][best],
+    )
+    theta = np.array([float(np.asarray(block[name])[best]) for name in L.LINEAR_ORDER])
+    al = np.asarray(data.al_position.value, float)
+    err = np.asarray(data.al_position_err.value, float)
+    real = adapt.real_rows(err)
+    t_yr = np.asarray(data.time.value, float) - float(data.t_ref.value)
+    astrometric = design[:, :5] @ theta[:5]  # the five-parameter solution
+    orbit = design[:, 5:] @ theta[5:]  # the companion's own contribution
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 8.5), layout="constrained")
+    # The fit a companion has to beat: the best no-orbit solution. It absorbs
+    # part of a real orbit into proper motion and parallax, which is why its
+    # residuals in (a) are not simply the orbit curve.
+    #
+    # Delta chi^2 compares the two models at THEIR OWN maxima, so both sides are
+    # refit -- `theta` above is a conditional draw, not an optimum, and scoring
+    # it against a least-squares null is not a likelihood ratio. `chi2_draw` is
+    # what the sampler actually reported and is the one panel (b) plots.
+    theta_null, chi2_null = adapt.linear_solution(design, al, err, 5)
+    _, chi2_fit = adapt.linear_solution(design, al, err)
+    null_resid = al - design[:, :5] @ theta_null
+    chi2_draw = adapt.chi2(al - design @ theta, err)
+    n_real = int(real.sum())
+
+    sigma_a0 = L.sigma_a0_au(row["mass_st_msun"])
+
+    fig, axes = plt.subplots(2, 3, figsize=(19.5, 9.0), layout="constrained")
     p_true, snr = row["period_best"], row["snr_total_best"]
     fig.suptitle(
         f"gaia {int(row['gaia_source_id'])}   SNR$_{{tot}}$={snr:.1f}   "
         f"$P_{{true}}$={p_true:.4f} yr   $e$={row['ecc_best']:.2f}   "
-        f"$\\alpha$={row['alpha_mas_best']:.3f} mas   {n_epochs} epochs   "
-        f"ESS={row['ess']:.1f}   "
+        f"$\\alpha$={row['alpha_mas_best']:.3f} mas   "
         + (
             "RECOVERED"
             if row["recovered"]
             else ("RAILED" if row["railed"] else "MISSED")
         ),
-        fontsize=11,
+        fontsize=12,
     )
 
     # (a) the data, with the 5-parameter astrometric solution removed. Raw AL is
     # ~250 mas rms and the orbit ~1 mas, so nothing is visible until it is.
     ax = axes[0, 0]
+    order = np.argsort(t_yr[real])
+    ax.plot(
+        t_yr[real][order],
+        null_resid[real][order],
+        "o",
+        ms=3,
+        mfc="none",
+        mec="0.7",
+        mew=0.7,
+        zorder=1,
+        label="residual with NO orbit",
+    )
     ax.errorbar(
         t_yr[real],
         (al - astrometric)[real],
@@ -160,15 +277,16 @@ def plot_system(row, block, arrays, out_dir):
         ms=3,
         lw=0.8,
         color="0.25",
+        zorder=2,
         label="data $-$ astrometric solution",
     )
-    order = np.argsort(t_yr[real])
     ax.plot(
         t_yr[real][order],
         orbit[real][order],
         "-",
         lw=1.2,
-        color="#C2185B",
+        color=ORBIT,
+        zorder=3,
         label="best-weight orbit term",
     )
     ax.set(xlabel="time $-$ $t_{ref}$ [yr]", ylabel="along-scan [mas]")
@@ -189,33 +307,54 @@ def plot_system(row, block, arrays, out_dir):
     span = np.array(
         [min(predicted.min(), observed.min()), max(predicted.max(), observed.max())]
     )
-    ax.plot(span, span, "-", lw=1.2, color="#C2185B", label="1:1")
-    chi2 = np.mean(((observed - predicted) / err[real]) ** 2)
+    ax.plot(span, span, "-", lw=1.2, color=ORBIT, label="1:1")
     ax.set(xlabel="model orbit term [mas]", ylabel="data $-$ astrometric [mas]")
     ax.legend(fontsize=7.5)
+    # Delta chi^2 is the fit improvement the orbit bought, BEFORE any Occam
+    # penalty. A railed system with a large one is a detection the amplitude
+    # prior rejected, which is a different diagnosis from a weak signal.
     ax.set_title(
-        rf"best-weight draw: $\chi^2/N$ = {chi2:.1f}"
-        + ("" if chi2 < 3 else "   (library too coarse to fit well)"),
+        rf"best-weight draw: $\chi^2/N$ = {chi2_draw / n_real:.2f}"
+        "\n"
+        rf"refit at that period: $\Delta\chi^2$ = {chi2_null - chi2_fit:.1f} "
+        rf"over {n_real} epochs",
         fontsize=10,
     )
 
-    # (c) THE degeneracy panel. A one-year orbit and the parallax term explain
+    # (c) the period posterior itself. The scatter panels show where the draws
+    # ARE; this shows how much they are worth, which is the only way multimodality
+    # is visible when 1000+ of the 1024 draws carry no mass at all.
+    ax = axes[0, 2]
+    edges = np.linspace(np.log10(C.PERIOD_MIN_YR), np.log10(C.PERIOD_MAX_YR), 60)
+    density, _ = np.histogram(np.log10(period), bins=edges, weights=w)
+    if density.max() > 0:
+        density = density / density.max()
+    ax.stairs(density, edges, fill=True, color=ORBIT, alpha=0.75)
+    ax.axvline(np.log10(p_true), color=ORBIT, lw=1.4, label="injected period")
+    ax.axvline(0.0, color=PARALLAX, ls="--", lw=1.2, label="1 yr (parallax period)")
+    ax.axvline(
+        np.log10(C.PERIOD_MIN_YR * C.RAIL_FACTOR),
+        color="k",
+        ls="--",
+        lw=1,
+        label="rail threshold",
+    )
+    ax.set(
+        xlabel=r"$\log_{10}$ period [yr]",
+        ylabel="posterior density (peak = 1)",
+        xlim=(edges[0], edges[-1]),
+    )
+    ax.legend(fontsize=7)
+    ax.set_title("weighted period posterior: two peaks = degenerate", fontsize=10)
+
+    # (d) THE degeneracy panel. A one-year orbit and the parallax term explain
     # the same signal, so a bimodal posterior here is the diagnosis.
     ax = axes[1, 0]
-    scat = ax.scatter(
-        period,
-        parallax,
-        c=np.log10(np.maximum(weight, 1e-12)),
-        s=14,
-        cmap="viridis",
-        lw=0,
-    )
-    fig.colorbar(scat, ax=ax, label=r"$\log_{10}$ weight")
-    ax.axvline(p_true, color="#C2185B", lw=1.2, label="injected period")
-    ax.axvline(1.0, color="#0288D1", ls="--", lw=1.2, label="1 yr (parallax period)")
-    ax.axhline(
-        row["parallax_mas"], color="#C2185B", ls=":", lw=1.2, label="true parallax"
-    )
+    scat = _weighted_scatter(ax, period, parallax, w, keep)
+    fig.colorbar(scat, ax=ax, label=r"$\ln(w / w_{\rm best})$")
+    ax.axvline(p_true, color=ORBIT, lw=1.2, label="injected period")
+    ax.axvline(1.0, color=PARALLAX, ls="--", lw=1.2, label="1 yr")
+    ax.axhline(row["parallax_mas"], color=ORBIT, ls=":", lw=1.2, label="true parallax")
     ax.set(
         xscale="log",
         xlabel="period [yr]",
@@ -225,25 +364,25 @@ def plot_system(row, block, arrays, out_dir):
     ax.legend(fontsize=7)
     ax.set_title("period vs parallax: two clumps = the 1 yr degeneracy", fontsize=10)
 
-    # (d) amplitude vs period. The no-orbit mode lives at a0 -> 0 and the
-    # shortest period, which is what "railed" means.
+    # (e) amplitude vs period, against the prior that shapes it. The no-orbit
+    # mode lives at a0 -> 0 and the shortest period, which is what "railed"
+    # means -- and the prior curve is what pushes it there.
     ax = axes[1, 1]
-    scat = ax.scatter(
-        period,
-        np.maximum(a0, 1e-6),
-        c=np.log10(np.maximum(weight, 1e-12)),
-        s=14,
-        cmap="viridis",
-        lw=0,
+    scat = _weighted_scatter(ax, period, np.maximum(a0, 1e-6), w, keep)
+    fig.colorbar(scat, ax=ax, label=r"$\ln(w / w_{\rm best})$")
+    grid = np.logspace(np.log10(C.PERIOD_MIN_YR), np.log10(C.PERIOD_MAX_YR), 200)
+    ax.plot(
+        grid,
+        sigma_a0 * (grid / C.P0_YR) ** (2.0 / 3.0) * row["parallax_mas"],
+        "-",
+        color="#6A1B9A",
+        lw=1.4,
+        zorder=3,
+        label=rf"prior scale $\sigma_a(P)$, {C.M_MAX_MJUP:g} $M_{{\rm Jup}}$",
     )
-    fig.colorbar(scat, ax=ax, label=r"$\log_{10}$ weight")
-    ax.axvline(p_true, color="#C2185B", lw=1.2)
+    ax.axvline(p_true, color=ORBIT, lw=1.2)
     ax.axhline(
-        row["alpha_mas_best"],
-        color="#C2185B",
-        ls=":",
-        lw=1.2,
-        label=r"injected $\alpha$",
+        row["alpha_mas_best"], color=ORBIT, ls=":", lw=1.2, label=r"injected $\alpha$"
     )
     ax.axvline(
         C.PERIOD_MIN_YR * C.RAIL_FACTOR,
@@ -263,6 +402,42 @@ def plot_system(row, block, arrays, out_dir):
     ax.set_title(
         r"amplitude vs period: $a_0 \to 0$ at the floor is the null", fontsize=10
     )
+
+    # (f) the numbers, so the panels above do not have to carry them in titles.
+    ax = axes[1, 2]
+    ax.axis("off")
+    ax.grid(False)
+    n_keep = int(keep.sum())
+    lines = [
+        ("ESS", f"{row['ess']:.1f}  of {C.N_PRIOR_SAMPLES:,} library draws"),
+        ("weight_captured", f"{row['weight_captured']:.4f}"),
+        ("draws carrying the mass", f"{n_keep} of {len(w)} stored"),
+        ("", ""),
+        ("chi2/N, best draw", f"{chi2_draw / n_real:.3f}"),
+        ("chi2/N, refit orbit", f"{chi2_fit / n_real:.3f}"),
+        ("chi2/N, no orbit", f"{chi2_null / n_real:.3f}"),
+        ("delta chi2 (refit)", f"{chi2_null - chi2_fit:.1f}"),
+        ("logZ_int", f"{row['logZ_int']:.1f}"),
+        ("", ""),
+        ("epochs", f"{n_epochs} real, padded to {int(row['n_padded'])}"),
+        ("host mass", f"{row['mass_st_msun']:.3f} Msun"),
+        ("parallax", f"{row['parallax_mas']:.2f} mas (true)"),
+        ("sigma_a0", f"{sigma_a0:.4f} AU"),
+        ("injected alpha", f"{row['alpha_mas_best']:.4f} mas"),
+        ("period, best draw", f"{period[best]:.5f} yr"),
+        ("period, true", f"{p_true:.5f} yr"),
+    ]
+    ax.text(
+        0.0,
+        1.0,
+        "\n".join(f"{k:<24}{v}" if k else "" for k, v in lines),
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        family="monospace",
+        fontsize=8.5,
+    )
+    ax.set_title("what the fit reported", fontsize=10, loc="left")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"gaia_{int(row['gaia_source_id'])}.png"
@@ -332,5 +507,7 @@ def make_gallery(population="1_companion", per_bin=None, verbose=True):
                 )
     if verbose:
         cells = chosen["cell"].nunique()
+        counts = chosen["outcome"].value_counts().to_dict()
         print(f"  {len(written)} figures across {cells} (SNR, period) cells -> {root}")
+        print(f"  outcomes: {counts}")
     return written

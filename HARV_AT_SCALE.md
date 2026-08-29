@@ -211,6 +211,33 @@ input catalog already carries — so this needs no trial run.
   importance weights normalized over the *whole* library, so they sum to
   `weight_captured`, not to 1. Every average over them must renormalize; this is
   the failure mode most likely to reach a published number silently.
+- **Store the log-weights, never the weights.** `Samples.weight` is a derived
+  property, `exp(ln_likelihood − (logZ_int + ln M))`, and at float32 storage it
+  is the one form that cannot survive: a strong detection spans ~10⁻¹³⁰, which
+  carries no information below ~10⁻³⁸ and stores as exactly `0.0` below ~10⁻⁴⁵.
+  Storing `ln_likelihood` instead is lossless (it is O(10²–10³) nats), is
+  smaller, and reconstructs the weights exactly. Storing the weights cost us 70
+  GB of mostly zeros *and* a floor in every figure that read them — see below.
+- **Colour weighted-sample plots by `ln(w/w_best)`, and cut on cumulative
+  mass.** Top-K keeps its 1,024 draws by *rank*, not by merit, so at `ess ≈ 1–8`
+  a handful carry the mass and the rest are prior draws that happened to rank
+  highest. Plotting them all alike — one colour, one size, full opacity —
+  produces a picture of the **prior** with the real draws hidden underneath.
+  Ours did exactly that for a full production run before anyone noticed. Draw
+  the sub-threshold draws as faint background, label them as prior coverage, and
+  scale size and opacity by weight.
+- **Refit both sides of any Δχ².** harv returns the marginalized linear
+  parameters as a *draw* from their conditional Gaussian, not as its mean. Score
+  that drawn θ against a least-squares no-orbit fit and you are comparing a
+  posterior sample with an optimum: we measured Δχ² = −13 on a railed system,
+  i.e. an apparently *negative* improvement from adding a companion. Refit both
+  models at their own maxima and the nesting guarantee holds.
+- **The stored posterior width is not an error bar.** At `ess ≈ 1` the weighted
+  standard deviation of a parameter collapses toward zero — a non-trivial share
+  of systems report exactly `0.0` — because one draw holds all the weight. The
+  pull against injected truth is then wildly overdispersed. Point estimates from
+  a top-K run are usable; their spreads are not, and that is what an MCMC second
+  pass is for.
 
 ---
 

@@ -33,6 +33,14 @@ from . import config as C
 # rows belongs in the manifest and not in the schema. Hard-coded rather than
 # probed because the manifest is written before the first system is fitted --
 # and asserted against a real fit in `tests/test_harv.py`, so it cannot drift.
+#
+# NO `weight` COLUMN, on purpose. harv's weight is a derived property,
+# `exp(ln_likelihood - (logZ_int + ln M))`, so it is exactly recoverable from
+# `ln_likelihood` here plus two scalars already in the per-system table -- and
+# it is the one form that does not survive float32. A strong detection spans
+# ~1e-130 in weight, which loses all precision below ~1e-38 and stores as
+# exactly 0.0 below ~1e-45, so storing it would keep 70 GB of mostly zeros and
+# throw the information away. Store the logs; derive the weights.
 SAMPLE_UNITS = {
     "period": "yr",
     "eccentricity": "",
@@ -46,7 +54,6 @@ SAMPLE_UNITS = {
     "ti_B": "mas",
     "ti_F": "mas",
     "ti_G": "mas",
-    "weight": "",
     "ln_likelihood": "",
     "ln_prior": "",
 }
@@ -113,7 +120,11 @@ def sigma_a0_au(m_star_msun=None):
         )
         raise ValueError(msg)
     m_max = C.M_MAX_MJUP * C.MJUP_IN_MSUN
-    return m_max / float(m_star_msun) ** (2.0 / 3.0)
+    # Array-friendly, so a figure can draw the prior across a whole population
+    # without looping -- but a scalar in still gives a plain float out, because
+    # `prior()` hands the result to unxt and a 0-d array is not the same thing.
+    scale = m_max / np.asarray(m_star_msun, dtype=float) ** (2.0 / 3.0)
+    return float(scale) if scale.ndim == 0 else scale
 
 
 def prior(par=None, m_star_msun=None):
@@ -205,3 +216,51 @@ def describe(library=None):
         described["sampled"] = sorted({**library.nonlinear, **library.linear})
         described["fingerprint"] = fingerprint(library)
     return described
+
+
+# The nine linear parameters, in the column order `_base_design_matrix` returns.
+# Thiele-Innes names, like `SAMPLE_UNITS` above -- the storage layer already
+# assumes that parameterization.
+LINEAR_ORDER = (
+    "ra0",
+    "dec0",
+    "pmra",
+    "pmdec",
+    "parallax",
+    "ti_A",
+    "ti_B",
+    "ti_F",
+    "ti_G",
+)
+
+
+def semi_major_axis_mas(ti_a, ti_b, ti_f, ti_g):
+    """`a0` from the Thiele-Innes constants (Halbwachs & Pourbaix identity).
+
+    `u = (A^2+B^2+F^2+G^2)/2`, `v = AG - BF`, `a0 = sqrt(u + sqrt(u^2 - v^2))`.
+    The same identity harv uses in its Jacobian correction, so the amplitude
+    this returns is the one the prior and the correction act on.
+    """
+    u = 0.5 * (ti_a**2 + ti_b**2 + ti_f**2 + ti_g**2)
+    v = ti_a * ti_g - ti_b * ti_f
+    return np.sqrt(u + np.sqrt(np.maximum(u * u - v * v, 0.0)))
+
+
+def design_matrix(model, data, period_yr, eccentricity, phase_peri):
+    """harv's own `(n_obs, 9)` design matrix for one draw, so `AL = X @ theta`.
+
+    Goes through `_base_design_matrix` rather than reimplementing the
+    Thiele-Innes projection, which would be a second copy of that geometry to
+    keep correct. `_solve_kepler` wants `period` as a Quantity but strips only
+    the mean anomaly, so the other two have to be bare floats.
+
+    The last four columns are the companion's contribution and the first five
+    are the astrometric solution -- which do not depend on the orbit, so
+    `adapt.null_solution` can fit them alone.
+    """
+    values = {
+        "period": Q(float(period_yr), "yr"),
+        "eccentricity": float(eccentricity),
+        "phase_peri": float(phase_peri),
+    }
+    return np.asarray(model._base_design_matrix(values, data))

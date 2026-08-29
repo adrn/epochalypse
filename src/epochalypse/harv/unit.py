@@ -77,7 +77,8 @@ def fit_system(
 
     if prior is None:
         prior = L.prior(m_star_msun=m_star_msun)
-    sampler = RejectionSampler(prior, L.model(par), batch_size=C.BATCH_SIZE)
+    model = L.model(par)
+    sampler = RejectionSampler(prior, model, batch_size=C.BATCH_SIZE)
     samples = sampler.run_with_samples(data, prior_samples, top_k=top_k, seed=seed)
 
     # Padding adds a constant to every log-likelihood. It cancels in the weights
@@ -89,10 +90,12 @@ def fit_system(
         name: np.asarray(q.value, dtype=np.float64)
         for name, q in {**samples.nonlinear, **samples.linear}.items()
     }
-    weight = np.asarray(samples.weight, dtype=np.float64)
-    columns["weight"] = weight
     columns["ln_likelihood"] = np.asarray(samples.ln_likelihood, dtype=np.float64)
     columns["ln_prior"] = np.asarray(samples.ln_prior, dtype=np.float64)
+    # Read once, here: `samples.weight` is a derived property that needs the
+    # metadata, and it is NOT stored -- see `library.SAMPLE_UNITS`. Every summary
+    # below is computed on this float64 array, before the float32 storage cast.
+    weight = np.asarray(samples.weight, dtype=np.float64)
 
     record = {
         "n_epochs": n_epochs,
@@ -107,30 +110,107 @@ def fit_system(
         "seed": int(seed),
         "t_ref_yr": float(meta["t_ref"]),
     }
-    record.update(_period_summary(columns["period"], weight))
+    record.update(_sample_summary(columns, weight))
+    record.update(_fit_quality(model, data, columns, weight))
     return record, columns
 
 
-def _period_summary(period, weight):
-    """Three point estimates, on the float64 draws before the storage cast.
+# Every per-system summary derived from the draws, so a NaN row has the same
+# columns as a good one and the parquet schema cannot depend on which system a
+# writer happened to see first.
+SUMMARY_COLUMNS = (
+    "period_best_yr",
+    "period_wmean_yr",
+    "period_wstd_yr",
+    "ecc_best",
+    "a0_wmean_mas",
+    "a0_wstd_mas",
+    "parallax_wmean_mas",
+    "weight_railed",
+)
+
+
+def _weighted(values, weight, total):
+    """`(mean, std)` of `values` under `weight`, renormalized by `total`."""
+    mean = float((weight * values).sum() / total)
+    var = float((weight * (values - mean) ** 2).sum() / total)
+    return mean, float(np.sqrt(max(var, 0.0)))
+
+
+def _sample_summary(columns, weight):
+    """Point estimates from the weighted draws, before the storage cast.
 
     `weight` sums to `weight_captured`, not to 1, so every average here
     renormalizes. An analysis that treats the stored draws as equal-weight is
     wrong, and this is the one place in the pipeline that already knows it.
+
+    Amplitude and parallax are summarized by their weighted **mean**, not by the
+    best draw's value. harv draws the analytically marginalized linear
+    parameters from their conditional Gaussian rather than returning its mean,
+    so any single row carries conditional-sampling scatter on top of the
+    posterior width. Period and eccentricity are genuine prior draws, so the
+    best-weight row is meaningful for those.
+
+    `weight_railed` is the posterior mass sitting at the "no orbit" solution.
+    It is the continuous form of `census.railed`, which reads the single best
+    draw and so cannot tell a marginal detection from a decisive non-detection.
     """
     total = float(weight.sum())
     if not np.isfinite(total) or total <= 0.0:
-        return {
-            "period_best_yr": np.nan,
-            "period_wmean_yr": np.nan,
-            "period_wstd_yr": np.nan,
-        }
-    mean = float((weight * period).sum() / total)
-    var = float((weight * (period - mean) ** 2).sum() / total)
+        return dict.fromkeys(SUMMARY_COLUMNS, np.nan)
+
+    period = columns["period"]
+    best = int(np.argmax(weight))
+    p_mean, p_std = _weighted(period, weight, total)
+    a0 = L.semi_major_axis_mas(*(columns[f"ti_{c}"] for c in "ABFG"))
+    a0_mean, a0_std = _weighted(a0, weight, total)
+    plx_mean, _ = _weighted(columns["parallax"], weight, total)
+    railed = period < C.PERIOD_MIN_YR * C.RAIL_FACTOR
     return {
-        "period_best_yr": float(period[int(np.argmax(weight))]),
-        "period_wmean_yr": mean,
-        "period_wstd_yr": float(np.sqrt(max(var, 0.0))),
+        "period_best_yr": float(period[best]),
+        "period_wmean_yr": p_mean,
+        "period_wstd_yr": p_std,
+        "ecc_best": float(columns["eccentricity"][best]),
+        "a0_wmean_mas": a0_mean,
+        "a0_wstd_mas": a0_std,
+        "parallax_wmean_mas": plx_mean,
+        "weight_railed": float(weight[railed].sum() / total),
+    }
+
+
+def _fit_quality(model, data, columns, weight):
+    """`chi2` of the best draw and of the no-orbit fit it has to beat.
+
+    Their difference is the detection statistic this stage otherwise never
+    computes: `logZ_int` integrates over the whole prior *including* the null
+    region, so it cannot say on its own whether the orbit term bought anything.
+    Two nested least-squares fits over ~100 rows, against a ~25 s library sweep.
+
+    BOTH sides are refit. The best draw's nonlinear parameters fix the orbit's
+    shape, but its stored linear parameters are a conditional *draw*, not an
+    optimum -- scoring those against a least-squares null is not a likelihood
+    ratio and can come out negative. See `adapt.linear_solution`.
+
+    Not an evidence ratio -- there is no Occam penalty in it. A railed system
+    with a large `chi2_null - chi2_best` is one the amplitude prior rejected
+    despite a real improvement in fit, which is precisely the failure mode
+    `config.M_MAX_MJUP` exists to control.
+    """
+    if not np.isfinite(weight).any() or float(weight.sum()) <= 0.0:
+        return {"chi2_best": np.nan, "chi2_null": np.nan}
+    best = int(np.argmax(weight))
+    design = L.design_matrix(
+        model,
+        data,
+        columns["period"][best],
+        columns["eccentricity"][best],
+        columns["phase_peri"][best],
+    )
+    al = np.asarray(data.al_position.value, dtype=np.float64)
+    err = np.asarray(data.al_position_err.value, dtype=np.float64)
+    return {
+        "chi2_best": adapt.linear_solution(design, al, err)[1],
+        "chi2_null": adapt.linear_solution(design, al, err, 5)[1],
     }
 
 

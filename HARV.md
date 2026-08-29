@@ -9,10 +9,13 @@ this one answers *what are the orbital parameters, and how well are they
 determined*. It runs on all three populations, control included, so the answer
 to the second question has a null distribution to be read against.
 
-**The output samples are weighted.** `weight` is normalized over the whole prior
-library, not over the 1,024 stored rows, so it sums to `weight_captured` rather
-than to 1. Any average over these draws that ignores it is wrong. This is a harv
-sharp bit and it survives into the parquet unchanged.
+**The output samples are weighted, and the weights are derived rather than
+stored.** harv's weight is `exp(ln_likelihood − (logZ_int + ln M))`, normalized
+over the whole prior library rather than over the 1,024 stored rows, so it sums
+to `weight_captured` and not to 1. Any average over these draws that ignores it
+is wrong. The parquet holds `ln_likelihood`; see **Reading the weights** for how
+to rebuild the weights and why storing them directly would throw information
+away.
 
 ## What one run of the sampler does
 
@@ -384,7 +387,7 @@ materializing 850 GB.
 ## Reading the diagnostics
 
 `harv_finish.py --stages census recovery figures` produces a text census, a
-binned recovery breakdown, and four PNGs in `$HARV_ROOT/figures/`. **Read them
+binned recovery breakdown, and six PNGs in `$HARV_ROOT/figures/`. **Read them
 in this order** — a single recovery percentage is close to uninterpretable on its
 own, because three unrelated things limit it and they compound.
 
@@ -394,6 +397,8 @@ own, because three unrelated things limit it and they compound.
 | `harv_period_aliases` | when it fails, *where* does the period land? |
 | `harv_library` | did the library resolve these posteriors? |
 | `harv_detection` | at what signal strength does recovery turn on? |
+| `harv_amplitude` | is the amplitude **prior** setting that threshold? |
+| `harv_precision` | is the reported period an estimate with an honest error bar? |
 
 **1. `harv_recovery_map`** — recovery over a period × eccentricity grid, with
 both marginals and per-bin counts and binomial errors. The period profile is the
@@ -431,22 +436,90 @@ Occam penalty a real orbit pays against the null, so if railing falls off a
 cliff well above `HIGH_SNR_MIN`, the amplitude prior is setting the detection
 threshold rather than the data.
 
+**5. `harv_amplitude`** — the prior that panel is accusing, drawn against the
+amplitudes that were actually injected. `sigma_a(P) = sigma_a0(M*) (P/P0)^(2/3)
+parallax`, per system, over the injected `alpha` vs period scatter; then railing
+binned by **`alpha / sigma_a`**; then the injected companion masses against
+`M_MAX_MJUP`. The middle panel is the one that settles the argument, because a
+rail rate against SNR cannot: railing that falls off a cliff as `alpha` crosses
+`sigma_a` means the **prior** is the threshold, railing that tracks only SNR
+means the data is too weak. Different problems, different fixes.
+
+**6. `harv_precision`** — whether the numbers are quotable. The pull
+`(P_wmean - P_true)/P_wstd` would be a unit normal if the stored spread were an
+uncertainty. It is not, and the panel says by how much: at `ess ≈ 1` a handful of
+prior draws localize the peak without sampling its width, and a non-trivial share
+report `P_wstd = 0` *exactly*, which is not a small uncertainty but no
+uncertainty at all. **Do not quote `period_wstd_yr` as an error bar** — that is
+what an MCMC second pass is for. The other two panels are the fractional period
+error against SNR, and recovery against transit count at *fixed* SNR, which are
+correlated in the catalog and have to be separated to be read.
+
 ### Per-system: `--stages gallery`
 
-The four figures above say how often the fit works. They cannot say what happens
-when it does not. `gallery` draws `GALLERY_PER_BIN` systems from each cell of a
-(SNR, injected period) grid — enough to see what a regime looks like, chosen by
-`gaia_source_id` order so the same catalog always gives the same gallery.
+The figures above say how often the fit works. They cannot say what happens when
+it does not. `gallery` draws `GALLERY_PER_BIN` systems from each cell of a
+(SNR, injected period) grid, **stratified by outcome** — round-robin across
+recovered / railed / wrong-period, so a cell at 90% recovery still shows its
+failures instead of eight successes. Deterministic within each category, so the
+same catalog always gives the same gallery.
 
-It needs `--catalog-root`: it is the only stage that reads epochs. Four panels
+It needs `--catalog-root`: it is the only stage that reads epochs. Six panels
 per system, into `figures/gallery/<population>/<cell>/`:
 
 | panel | what it shows |
 | --- | --- |
-| data minus the astrometric solution, vs time | the ~1 mas signal, after removing the ~250 mas parallax and proper motion that would otherwise hide it |
-| model vs data, with a 1:1 line and χ²/N | whether the best-weight draw explains the signal. **Not** a phase fold — along-scan is a 1-D projection at a scan angle that changes every epoch, so a fold never closes up even for a perfect fit |
+| data minus the astrometric solution, vs time | the ~1 mas signal, after removing the ~250 mas parallax and proper motion that would otherwise hide it, with the **no-orbit** residuals behind it |
+| model vs data, with a 1:1 line | whether the best-weight draw explains the signal, and Δχ² against the no-orbit fit. **Not** a phase fold — along-scan is a 1-D projection at a scan angle that changes every epoch, so a fold never closes up even for a perfect fit |
+| the weighted period posterior | the marginal itself. The scatter panels show where the draws *are*; this shows what they are worth, which is the only way multimodality is visible when 1,000 of 1,024 draws carry no mass |
 | period vs parallax, coloured by weight | the degeneracy panel |
-| a₀ vs period, coloured by weight | the null mode, at `a₀ → 0` and the prior floor |
+| a₀ vs period, with this system's own σ_a(P) | the null mode at `a₀ → 0` and the prior floor, against the prior curve that pushes it there |
+| a text summary card | ESS, `weight_captured`, draws carrying the mass, Δχ², `logZ_int`, epochs, host mass, σ_a0 |
+
+**Δχ² refits both sides.** harv returns the marginalized linear parameters as a
+*draw* from their conditional Gaussian, not as its mean, so scoring the stored
+θ against a least-squares null compares a posterior sample with an optimum and
+can make a real orbit look worse than no orbit at all — measured at −13 on a
+railed system before this was fixed. Both models are refit at their own maxima,
+so Δχ² ≥ 0 always and `test_harv.py` asserts it.
+
+**What the colour means.** `ln(w / w_best)` — nats of likelihood below the best
+fit — computed from the stored `ln_likelihood`, never from a stored weight
+column. Grey points are **prior draws, not bad fits**: `TOP_K` keeps 1,024 by
+*rank*, and at `ess ≈ 1–8` only a handful carry mass. Anything outside
+`GALLERY_WEIGHT_MASS` is drawn small and pale, and the count is in the legend.
+See "Reading the weights" below for why this is not cosmetic.
+
+### Reading the weights
+
+There is **no `weight` column** in the samples parquet. Rebuild it from what is
+there:
+
+```python
+# per system: ln_likelihood from the samples, the rest from the per-system table
+log_norm = logZ_int + pad_log_offset(n_epochs, n_padded) + np.log(n_prior_samples)
+weight = np.exp(ln_likelihood - log_norm)     # sums to weight_captured
+```
+
+`pad_log_offset` appears because `logZ_int` is stored with it already subtracted
+(so two systems in different epoch buckets are comparable) while `ln_likelihood`
+is stored raw. For anything that only needs *relative* weights — every figure —
+`np.exp(ln_likelihood - ln_likelihood.max())` is enough and needs no metadata.
+
+**Why derive rather than store.** `SAMPLE_DTYPE` is `float32`, and a strong
+detection spans ~10⁻¹³⁰ in weight. float32 carries no information below ~10⁻³⁸
+and stores exactly `0.0` below ~10⁻⁴⁵, so a stored weight column is ~70 GB of
+mostly zeros with a hard floor that has nothing to do with the posterior. The
+logs never underflow: `ln_likelihood` is O(10²–10³), where float32 resolves
+~10⁻⁴ nats.
+
+That floor is not hypothetical. The gallery used to colour by
+`log10(max(weight, 1e-12))`, which stacked a plotting clamp on top of the storage
+floor and painted ~99.7% of the draws one flat colour at full opacity — a picture
+of the prior with the two or three real draws hidden underneath it. **Top-K keeps
+1,024 draws by rank, not by merit.** At `ess ≈ 1–8` a handful carry the mass and
+the rest are prior draws that happened to rank highest; they are worth showing as
+coverage, and worth never showing as solutions.
 
 **Look at the 0.79–1.26 yr cells first.** A one-year orbit is degenerate with
 parallax, because parallax is a free linear parameter with a deliberately broad

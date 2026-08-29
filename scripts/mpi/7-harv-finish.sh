@@ -20,12 +20,19 @@
 #             histogram of where the MISSES landed. This is the stage that says
 #             whether a low recovery number is the 5.5 yr baseline's fault
 #             (unrecoverable by construction), the prior's, or the library's.
-#   figures   the same information as four PNGs, in $HARV_ROOT/figures/
+#   figures   the same information as six PNGs, in $HARV_ROOT/figures/. The two
+#             newest are the ones to read first on this run: harv_amplitude
+#             plots the injected amplitudes against the prior on them and bins
+#             railing by alpha/sigma_a, which is what separates "the prior is
+#             the threshold" from "the data is too weak"; harv_precision says
+#             whether period_wstd_yr is quotable as an error bar (it is not)
 #   gallery   per-system diagnostics: the data, the reconstructed model and the
 #             posterior samples, for GALLERY_PER_BIN systems from each cell of a
-#             (SNR, injected period) grid. Needs --catalog-root, because it is
-#             the only stage that reads epochs. Look at the 0.79-1.26 yr cells
-#             first -- a one-year orbit is degenerate with parallax
+#             (SNR, injected period) grid -- stratified across recovered /
+#             railed / wrong-period, so a high-recovery cell still shows its
+#             failures. Needs --catalog-root, because it is the only stage that
+#             reads epochs. Look at the 0.79-1.26 yr cells first -- a one-year
+#             orbit is degenerate with parallax
 #   merge     last, because it is the only stage that writes much
 #
 # Read the output in that order too. A single recovery percentage is close to

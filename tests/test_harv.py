@@ -263,7 +263,7 @@ def test_gallery():
                 jnp.cos(omega), jnp.sin(omega), jnp.cos(node), jnp.sin(node), cos_i
             )
         ]
-        worst = max(worst, abs(gallery.semi_major_axis_mas(*abfg) / a0 - 1))
+        worst = max(worst, abs(L.semi_major_axis_mas(*abfg) / a0 - 1))
     check(
         "a0 recovered from the Thiele-Innes constants, over 200 random orbits",
         worst < 1e-6,
@@ -271,7 +271,7 @@ def test_gallery():
     )
     check(
         "a zero-amplitude orbit gives a0 = 0 -- the null the rail threshold sits at",
-        gallery.semi_major_axis_mas(0.0, 0.0, 0.0, 0.0) == 0.0,
+        L.semi_major_axis_mas(0.0, 0.0, 0.0, 0.0) == 0.0,
     )
 
     if CATALOG_ROOT is None:
@@ -333,6 +333,67 @@ def test_gallery():
             set(got["shard_row"]) == set(rows),
             f"asked for {rows}, got {sorted(got['shard_row'])}",
         )
+
+
+def test_gallery_weights():
+    """What the panels colour by, and what they decide is worth drawing.
+
+    The old panels coloured by `log10(max(weight, 1e-12))` off a float32 weight
+    column, which stacked two artificial floors on top of each other and made
+    ~99.7% of the draws one flat dark colour at full opacity. These are the
+    checks that the replacement reads the posterior instead of the prior.
+    """
+    from epochalypse.harv import gallery
+
+    arrays = fake_system(n_epochs=90, period=1.7, alpha=1.5, seed=11)
+    record, columns = unit.fit_system(
+        *arrays, seed=7, prior_samples=L.draw(N_LIB), m_star_msun=0.41, top_k=K
+    )
+    w, keep = gallery.weights(columns)
+
+    offset = adapt.pad_log_offset(record["n_epochs"], record["n_padded"])
+    harv_w = np.exp(
+        columns["ln_likelihood"]
+        - record["logZ_int"]
+        - offset
+        - np.log(record["n_prior_samples"])
+    )
+    check(
+        "the panel weights are harv's own, up to the normalization",
+        np.allclose(w, harv_w / harv_w.max(), rtol=1e-10),
+        "colour is ln(w/w_best) -- nats of likelihood below the best fit",
+    )
+    check(
+        "the best draw is always drawn as posterior, and anchors the scale",
+        bool(keep[np.argmax(w)]) and w.max() == 1.0,
+    )
+    check(
+        "`keep` covers at least the mass it promises",
+        w[keep].sum() / w.sum() >= C.GALLERY_WEIGHT_MASS,
+        f"{int(keep.sum())} of {len(w)} draws hold "
+        f"{w[keep].sum() / w.sum():.4%} of the mass",
+    )
+
+    # The reason for the logs, made deterministic: a span like a real detection's.
+    span = {"ln_likelihood": -10.0 * np.arange(K, dtype=np.float64)}
+    w_span, keep_span = gallery.weights(span)
+    check(
+        "a float32 weight column would zero a tail the logs keep intact",
+        bool((np.float32(w_span) == 0).any()) and bool((w_span > 0).all()),
+        f"{int((np.float32(w_span) == 0).sum())} of {K} draws underflow float32, "
+        f"none underflow in log space",
+    )
+    check(
+        "and only the draws that matter are drawn as posterior",
+        int(keep_span.sum()) <= 2,
+        f"{int(keep_span.sum())} of {K} carry {C.GALLERY_WEIGHT_MASS:.1%} of the mass",
+    )
+
+    w0, keep0 = gallery.weights({"ln_likelihood": np.full(K, -np.inf)})
+    check(
+        "an all-non-finite system draws nothing rather than raising",
+        not keep0.any() and not w0.any(),
+    )
 
 
 def test_census_definitions():
@@ -519,14 +580,29 @@ def test_fit_system():
         and not np.array_equal(columns["ti_A"], other["ti_A"]),
         "top-K is chosen by likelihood alone",
     )
+    # No `weight` column is stored. harv's weight is
+    # `exp(ln_likelihood - (logZ_int + ln M))`, so it is exactly recoverable from
+    # the stored logs plus two per-system scalars -- and unlike a float32 weight
+    # it cannot underflow. Reconstructing it here exercises the padding
+    # bookkeeping too: `record["logZ_int"]` has `pad_log_offset` subtracted and
+    # `ln_likelihood` does not, so a sign error in either shows up as a sum that
+    # is off by e^530.
+    offset = adapt.pad_log_offset(record["n_epochs"], record["n_padded"])
+    log_norm = record["logZ_int"] + offset + np.log(record["n_prior_samples"])
+    w = np.exp(columns["ln_likelihood"] - log_norm)
     check(
-        "weights are non-increasing",
-        np.all(np.diff(columns["weight"]) <= 0),
+        "no weight column is stored -- it is derived, and the only lossy form",
+        "weight" not in columns,
+        f"{len(columns)} columns, ln_likelihood and ln_prior among them",
     )
     check(
-        "weight sums to weight_captured, not to 1",
-        np.isclose(columns["weight"].sum(), record["weight_captured"], rtol=1e-9),
-        f"{record['weight_captured']:.6f}",
+        "weights are non-increasing -- harv returns top-K sorted by weight",
+        np.all(np.diff(w) <= 0),
+    )
+    check(
+        "weights rebuilt from the stored logs sum to weight_captured, not to 1",
+        np.isclose(w.sum(), record["weight_captured"], rtol=1e-9),
+        f"{record['weight_captured']:.6f}, from ln_likelihood alone",
     )
     check(
         "ESS is finite and no larger than the library",
@@ -537,13 +613,13 @@ def test_fit_system():
         "the period summary renormalizes the weights",
         np.isclose(
             record["period_wmean_yr"],
-            (columns["weight"] * columns["period"]).sum() / columns["weight"].sum(),
+            (w * columns["period"]).sum() / w.sum(),
             rtol=1e-12,
         ),
     )
     check(
         "period_best is the highest-weight draw",
-        record["period_best_yr"] == columns["period"][np.argmax(columns["weight"])],
+        record["period_best_yr"] == columns["period"][np.argmax(w)],
         f"{record['period_best_yr']:.5f} yr",
     )
     check(
@@ -554,6 +630,39 @@ def test_fit_system():
     check(
         "the epoch count and its bucket are both recorded",
         record["n_epochs"] == 90 and record["n_padded"] == C.bucket_for(90) == 96,
+    )
+
+    # The summaries added so the population figures need never touch the ~850 GB
+    # of samples.
+    check(
+        "every derived summary is present and finite",
+        all(np.isfinite(record[name]) for name in unit.SUMMARY_COLUMNS),
+        ", ".join(unit.SUMMARY_COLUMNS),
+    )
+    check(
+        "amplitude is summarized by the weighted mean, not by the best draw",
+        np.isclose(
+            record["a0_wmean_mas"],
+            (w * L.semi_major_axis_mas(*(columns[f"ti_{c}"] for c in "ABFG"))).sum()
+            / w.sum(),
+            rtol=1e-12,
+        ),
+        "harv draws the marginalized linear parameters, it does not return their mean",
+    )
+    check(
+        "weight_railed is a probability -- the continuous form of census.railed",
+        0.0 <= record["weight_railed"] <= 1.0,
+        f"{record['weight_railed']:.3g} of the mass at the prior floor",
+    )
+    check(
+        "the two models are nested, so the no-orbit fit can never win",
+        record["chi2_null"] >= record["chi2_best"],
+        f"chi2 {record['chi2_null']:.1f} without an orbit, "
+        f"{record['chi2_best']:.1f} with -- delta {record['chi2_null'] - record['chi2_best']:.1f}",
+    )
+    check(
+        "an injected 1.5 mas orbit is a real improvement over no orbit at all",
+        record["chi2_null"] - record["chi2_best"] > 1.0,
     )
 
 
@@ -647,12 +756,17 @@ def test_sample_units():
     }
     check("every hard-coded unit matches what harv returns", not wrong, str(wrong))
     check(
-        "the three derived columns are dimensionless",
-        all(L.SAMPLE_UNITS[n] == "" for n in ("weight", "ln_likelihood", "ln_prior")),
+        "the two derived columns are dimensionless",
+        all(L.SAMPLE_UNITS[n] == "" for n in ("ln_likelihood", "ln_prior")),
     )
     check(
         "SAMPLE_UNITS has nothing harv does not return",
-        set(L.SAMPLE_UNITS) - set(stored) == {"weight", "ln_likelihood", "ln_prior"},
+        set(L.SAMPLE_UNITS) - set(stored) == {"ln_likelihood", "ln_prior"},
+    )
+    check(
+        "and no weight column -- derived from ln_likelihood, and the one lossy form",
+        "weight" not in L.SAMPLE_UNITS,
+        "~70 GB of mostly-zero float32 over the catalog",
     )
 
 
@@ -744,13 +858,30 @@ def test_work_unit():
         f"buckets {sorted(systems['n_padded'].unique())} in one shard",
     )
     check(
-        "the stored weights still sum to weight_captured after the float32 cast",
-        np.allclose(
-            [np.asarray(v, float).sum() for v in samples["weight"]],
-            systems["weight_captured"],
-            rtol=1e-5,
-        ),
-        f"SAMPLE_DTYPE = {C.SAMPLE_DTYPE}",
+        "no weight column survives into the parquet",
+        "weight" not in samples.columns,
+        f"stored: {sorted(c for c in samples.columns if c != 'shard_row')}",
+    )
+    merged = samples.merge(systems, on="shard_row", suffixes=("", "_sys"))
+    rebuilt = [
+        float(
+            np.exp(
+                np.asarray(r["ln_likelihood"], float)
+                - r["logZ_int"]
+                - adapt.pad_log_offset(r["n_epochs"], r["n_padded"])
+                - np.log(r["n_prior_samples"])
+            ).sum()
+        )
+        for _, r in merged.iterrows()
+    ]
+    check(
+        "weight_captured is rebuildable from the stored logs after the float32 cast",
+        np.allclose(rebuilt, merged["weight_captured"], rtol=1e-3),
+        f"SAMPLE_DTYPE = {C.SAMPLE_DTYPE}; the logs survive it, the weights would not",
+    )
+    check(
+        "the derived summaries reached the parquet",
+        set(unit.SUMMARY_COLUMNS) | {"chi2_null", "chi2_best"} <= set(systems.columns),
     )
 
 
