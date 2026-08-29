@@ -221,8 +221,19 @@ truth. Real DR3 astrometry for an astrometric binary is biased by the very orbit
 being fitted. Thiele-Innes recovers that accuracy without using any truth value,
 which is why it is the parameterization and this is the prior.
 
-Period bounds bracket the injected prior at both ends and are imported from
-`periodogram/config.py`, so the two analyses cannot drift apart.
+**The period prior is deliberately narrower than the injected one** — 0.01 to
+100 yr, 4.0 decades, against the periodogram's full 5×10⁻⁵ to 3300 yr. DR4 is
+5.5 yr with ~80 transits, so only roughly 0.1–10 yr is constrainable at all, and
+every decade the prior covers costs sampling density in the decades that can be.
+Measured worth about one order of magnitude of `N_PRIOR_SAMPLES` for period
+accuracy. It also moves the no-orbit solution from 5×10⁻⁵ to 0.01 yr, where
+`σ_a` is 34× larger and the null therefore carries a much bigger Occam penalty
+of its own.
+
+The cost is that a system injected outside the window cannot be recovered by
+construction. `census.in_search_range` exists so that is reported separately
+rather than counted as a failure, and **every recovery number is quoted over the
+searched range only.**
 
 ### One library, and how that is checked
 
@@ -376,8 +387,13 @@ band and the alias tracks drawn on: the annual parallax term puts aliases at
 `1/P_best = 1/P_true ± 1 yr⁻¹`, and the 2× / 0.5× harmonics compete too. With
 `ess ≈ 1` the reported period is a *single* prior draw, so misses **on** those
 tracks are a resolution problem that more samples fix, while misses scattered
-flat mean the data does not constrain those systems. The right panel histograms
-exactly that.
+flat mean the data does not constrain those systems.
+
+**Check the railed fraction before reading this figure.** On the first
+production run, aliasing was the *minority* failure: 65% of misses were the
+sampler collapsing to the no-orbit solution at the prior floor, not picking a
+wrong period. `--stages recovery` now splits the two, and `harv_detection`'s
+third panel plots the rail rate against SNR.
 
 **3. `harv_library`** — the ESS and `weight_captured` distributions, and
 recovery against ESS. That third panel runs **backwards** and is the one most

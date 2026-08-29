@@ -39,10 +39,8 @@ FIGURES = (
     "detection",
 )
 
-# log10 period and eccentricity bin edges, shared so the figures and the text
-# census cut the sample the same way.
-LOG_PERIOD_BINS = np.array([-5, -2, -1, -0.5, 0, 0.5, 1, 4])
-ECC_BINS = np.array([0, 0.3, 0.5, 0.7, 0.9, 1.0])
+LOG_PERIOD_BINS = census.LOG_PERIOD_BINS
+ECC_BINS = census.ECC_BINS
 POP_COLORS = {
     "0_companion": "#777777",
     "1_companion": "#050CDB",
@@ -67,22 +65,32 @@ def _save(fig, stem):
     return path
 
 
-def _frame(population, high_snr=True, extra=()):
-    """One population as a DataFrame with `recovered` and matched-truth columns."""
+def _frame(population, high_snr=True, in_range=False, extra=()):
+    """One population as a DataFrame with the census flags and matched truths.
+
+    `in_range` drops systems injected outside the searched period range. Any
+    panel quoting *recovery* wants that, because those systems cannot be
+    recovered by construction; panels showing ESS or evidence want the whole
+    sample.
+    """
     table = census.read_systems(population, census.system_columns(population, extra))
     frame = table.to_pandas()
     frame["recovered"] = census.recovered(table, population)
+    frame["railed"] = census.railed(table)
+    frame["searchable"] = census.in_search_range(table, population)
     for name in ("period", "ecc", "snr_total"):
         frame[f"{name}_best"] = census.best_truth(table, population, name)
     mask = census.high_snr_mask(table, population)
     if high_snr and mask is not None:
         frame = frame[mask]
+    if in_range and frame["searchable"].notna().any():
+        frame = frame[frame["searchable"].astype(bool)]
     return frame.reset_index(drop=True)
 
 
 def _binned(frame, key, bins):
     """(centres, fraction recovered, n) over `bins`, skipping empty bins."""
-    index = np.digitize(np.asarray(frame[key], float), bins) - 1
+    index = census.bin_index(frame[key], bins)
     out = []
     for b in range(len(bins) - 1):
         sel = index == b
@@ -111,23 +119,23 @@ def plot_recovery_map(population="1_companion"):
     0.1-10 yr of a 7.8-decade prior, and the prior's eccentricity coverage may
     not match what was injected. Only the joint view separates them.
     """
-    frame = _frame(population)
+    frame = _frame(population, in_range=True)
     frame["log_period"] = np.log10(frame["period_best"])
 
     fig, axes = plt.subplots(
         1, 3, figsize=(16, 4.6), gridspec_kw={"width_ratios": [1.5, 1, 1]}
     )
     fig.suptitle(
-        f"{population}, high-SNR (SNR_tot >= {PG.HIGH_SNR_MIN:g} on every companion) "
-        f"-- {len(frame):,} systems, recovery = |ln(P_best/P_true)| < ln "
-        f"{PG.PERIOD_RECOVER_TOL:g}",
+        f"{population}, high-SNR (SNR_tot >= {PG.HIGH_SNR_MIN:g}) within the searched "
+        f"range {C.PERIOD_MIN_YR:g}-{C.PERIOD_MAX_YR:g} yr -- {len(frame):,} systems, "
+        f"recovery = |ln(P_best/P_true)| < ln {PG.PERIOD_RECOVER_TOL:g}",
         fontsize=11,
     )
 
     grid = np.full((len(LOG_PERIOD_BINS) - 1, len(ECC_BINS) - 1), np.nan)
     counts = np.zeros_like(grid)
-    pi = np.digitize(frame["log_period"], LOG_PERIOD_BINS) - 1
-    ei = np.digitize(frame["ecc_best"], ECC_BINS) - 1
+    pi = census.bin_index(frame["log_period"], LOG_PERIOD_BINS)
+    ei = census.bin_index(frame["ecc_best"], ECC_BINS)
     rec = frame["recovered"].to_numpy()
     for i in range(grid.shape[0]):
         for j in range(grid.shape[1]):
@@ -230,7 +238,7 @@ def plot_period_aliases(population="1_companion"):
     fix. Misses scattered everywhere, or piled at the prior edges, mean the data
     does not constrain those systems and no library size will help.
     """
-    frame = _frame(population)
+    frame = _frame(population, in_range=True)
     p_true = np.asarray(frame["period_best"], float)
     p_best = np.asarray(frame["period_best_yr"], float)
     snr = np.asarray(frame["snr_total_best"], float)
@@ -379,7 +387,7 @@ def plot_library(populations=None):
     axes[1].legend(fontsize=7.5)
 
     # recovery against ESS -- the anti-correlation
-    frame = _frame("1_companion")
+    frame = _frame("1_companion", in_range=True)
     frame["log_ess"] = np.log10(np.maximum(np.asarray(frame["ess"], float), 1.0))
     bins = np.linspace(0, max(frame["log_ess"].max(), 1.0), 9)
     centres, fraction, n = _binned(frame, "log_ess", bins)
@@ -422,7 +430,7 @@ def plot_detection(population="1_companion"):
     completeness curve -- recovery against injected SNR, which is what tells you
     where the method turns on rather than where you chose to cut.
     """
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), layout="constrained")
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4.6), layout="constrained")
 
     for pop in C.POPULATIONS:
         frame = _frame(pop, high_snr=False)
@@ -443,7 +451,7 @@ def plot_detection(population="1_companion"):
     axes[0].set_title("evidence: the control is the null distribution", fontsize=10)
     axes[0].legend(fontsize=7.5)
 
-    frame = _frame(population, high_snr=False)
+    frame = _frame(population, high_snr=False, in_range=True)
     snr = np.asarray(frame["snr_total_best"], float)
     frame["log_snr"] = np.log10(np.maximum(snr, 1e-3))
     bins = np.linspace(-2, np.nanmax(frame["log_snr"]), 12)
@@ -482,6 +490,54 @@ def plot_detection(population="1_companion"):
         ylim=(0, 1),
     )
     axes[1].set_title(f"{population}: completeness against injected SNR", fontsize=10)
+
+    # Rail fraction against SNR -- the curve that says whether the AMPLITUDE
+    # prior is setting the detection threshold rather than the data. sigma_a0
+    # controls the Occam penalty on a real orbit relative to the no-orbit
+    # solution, and that penalty grows with period because the prior width
+    # scales as (P/P0)^(2/3). If railing falls off a cliff at some SNR and is
+    # near zero above it, that cliff IS the threshold -- and it should sit at
+    # HIGH_SNR_MIN, not well above it. A cliff at SNR ~ 7 against a cut at 5 is
+    # what would justify changing sigma_a0.
+    index = census.bin_index(frame["log_snr"], bins)
+    xs, rail, ns = [], [], []
+    for b in range(len(bins) - 1):
+        sel = index == b
+        if sel.sum():
+            xs.append(0.5 * (bins[b] + bins[b + 1]))
+            rail.append(float(frame["railed"].to_numpy()[sel].mean()))
+            ns.append(int(sel.sum()))
+    xs, rail, ns = np.array(xs), np.array(rail), np.array(ns)
+    err = np.sqrt(rail * (1 - rail) / np.maximum(ns, 1))
+    axes[2].errorbar(xs, rail, yerr=err, marker="o", capsize=3, lw=1.5, color="#C2185B")
+    for x, y, m in zip(xs, rail, ns):
+        axes[2].annotate(
+            f"{m:,}",
+            (x, y),
+            textcoords="offset points",
+            xytext=(0, 9),
+            ha="center",
+            fontsize=7,
+            color="0.35",
+        )
+    axes[2].axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
+    axes[2].text(
+        np.log10(PG.HIGH_SNR_MIN),
+        0.95,
+        f"  HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}",
+        fontsize=8,
+        va="top",
+    )
+    axes[2].set(
+        xlabel=r"$\log_{10}$ SNR$_{\rm tot}$ of the matched companion",
+        ylabel="railed fraction",
+        ylim=(0, 1),
+    )
+    axes[2].set_title(
+        "no-detection rate: a cliff above HIGH_SNR_MIN means\n"
+        "the amplitude prior, not the data, sets the threshold",
+        fontsize=9,
+    )
     return _save(fig, "detection")
 
 

@@ -87,12 +87,32 @@ USE_THIELE_INNES = True
 # ==========================================================================
 # Prior bounds
 # ==========================================================================
-# Period bounds bracket the injected prior at BOTH ends, the same requirement
-# the periodogram grid has and for the same reason: a truth outside the prior
-# is unrecoverable by construction rather than by measurement. Imported so the
-# two analyses cannot drift apart.
-PERIOD_MIN_YR = _pg.P_MIN  # 5e-5 yr, the Roche-limited innermost orbit
-PERIOD_MAX_YR = _pg.P_MAX  # 3300 yr
+# Period bounds. These are DELIBERATELY NARROWER than the periodogram's
+# `P_MIN`/`P_MAX` (5e-5 to 3300 yr) and than the injected prior. The two stages
+# are answering different questions: the periodogram searches the full injected
+# range because a peak anywhere is worth reporting, while this stage spends a
+# fixed sampling budget and every decade it covers costs density in the decades
+# that can actually be constrained.
+#
+# DR4 is 5.5 yr with ~80 transits, so roughly 0.1-10 yr is constrainable at all
+# -- below that the signal aliases, above it the orbit is absorbed into proper
+# motion. 4.0 decades instead of 7.8 was measured worth about one order of
+# magnitude of N_PRIOR_SAMPLES for period accuracy (0.01% error at M=1e6 versus
+# 1.00% over the full range; scripts/benchmarks/RESULTS.md).
+#
+# It also moves the "no orbit" solution. The Thiele-Innes amplitude prior scales
+# as (P/P0)^(2/3), so the shortest period in the prior is where an orbit is
+# forced to zero amplitude and the model collapses to a five-parameter
+# astrometric fit. At 5e-5 yr that null is cheap; at 0.01 yr sigma_a is 34x
+# larger, so the null carries a far bigger Occam penalty of its own. On the
+# first 300k-system run that null took 65% of all recovery failures.
+#
+# THE COST: a system whose injected period falls outside this window cannot be
+# recovered, by construction rather than by measurement. `census.in_search_range`
+# exists so that is reported separately instead of being counted as a failure --
+# see HARV.md.
+PERIOD_MIN_YR = 0.01  # 3.7 d; below this ~80 epochs over 5.5 yr alias
+PERIOD_MAX_YR = 100.0  # ~18x the mission baseline
 
 # The remaining scales are set from the catalog itself (500 pc sample):
 #   parallax    5.9 - 74 mas, median 14
@@ -182,6 +202,14 @@ ESS_RESOLVED = 10.0
 # samples carry. Near 1.0 means nothing was truncated. Below this, TOP_K threw
 # real mass away and should be raised.
 WEIGHT_CAPTURED_MIN = 0.9
+
+# `railed` -- did the fit collapse to the "no orbit" solution? The amplitude
+# prior scales as (P/P0)^(2/3), so the shortest period in the prior forces the
+# orbit to zero amplitude. A best sample sitting there is a NON-DETECTION, which
+# is a different failure from finding the wrong period, and mixing the two makes
+# a recovery percentage uninterpretable. Multiplies PERIOD_MIN_YR rather than
+# being an absolute period, so it follows the prior if the bounds move.
+RAIL_FACTOR = 1.5
 
 # ==========================================================================
 # Output

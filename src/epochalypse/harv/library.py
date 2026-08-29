@@ -130,6 +130,12 @@ def fingerprint(library):
 
     Over the parameter names in sorted order and their raw values, so it is
     stable against dict ordering but not against a changed draw.
+
+    It covers the DRAWS, not every setting. `sigma_a0` and `sigma_pos` shape the
+    analytically marginalized linear priors, which are never sampled into the
+    library, so changing them leaves this hash identical. The full settings are
+    in `describe()` and so in the run manifest -- read those, not this, to tell
+    two runs apart.
     """
     digest = hashlib.blake2s(digest_size=16)
     columns = {**library.nonlinear, **library.linear}

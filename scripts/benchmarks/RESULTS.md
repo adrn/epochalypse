@@ -158,6 +158,33 @@ What this invalidated:What this invalidated:
 The periodogram stage's "2× for Rome" *did* hold (measured 2.4×). Carrying it to
 a JAX/XLA kernel with a completely different instruction mix was the mistake.
 
+## From the first production run — 300,000 systems, M = 10⁶
+
+1,536 genoa ranks, 2,880 units, 2,116 core-hours.
+
+**Two per-system numbers, and they answer different questions.**
+
+| | s/system | |
+| --- | --- | --- |
+| throughput | **25.2** | sum of all rank time / systems |
+| charged | **44.6** | slowest rank × ranks / systems |
+
+`harv_mpi.py` prints only the second. The gap is idle time: **56.5% of the
+allocation was used.**
+
+**The idle 44% was load imbalance, and it is free to fix.** Per-unit cost varied
+2.4× (30 → 73 min for the same 105 systems), because cost is linear in the
+padded epoch count and `mpi.slice_for_rank` hands each rank a *contiguous* slice
+of a work list ordered by shard — which is sky order, so transit counts are
+correlated within a slice. The ranks that drew the cheap tail finished in a
+third of the time and then sat idle. `mpi.stride_for_rank` interleaves instead,
+which decorrelates cost from rank at the price of I/O locality this stage can
+easily afford (~25 s of compute per system against reading one row group).
+Perfect balance is 82.7 min against the observed 146.
+
+Contiguous slicing remains right for the periodogram, where per-system cost
+varies ~15% and the frequency loop dominates.
+
 ## Open questions
 
 1. **~2× of the 6.3× core gap is unexplained.** Worth 10 minutes: it is a

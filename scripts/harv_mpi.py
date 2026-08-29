@@ -136,6 +136,18 @@ def main(argv=None):
         help=f"samples kept per system (default {C.TOP_K})",
     )
     parser.add_argument(
+        "--sigma-a0",
+        type=float,
+        default=None,
+        help=f"orbit-amplitude prior scale in AU at P0 (default {C.SIGMA_A0_AU}). "
+        "This sets the detection threshold -- a wider prior means a larger Occam "
+        "penalty on a real orbit relative to the no-orbit solution -- so sweep it "
+        "on a subsample rather than guessing. Recorded in the manifest, but it "
+        "does NOT change the library fingerprint: it only affects the "
+        "analytically marginalized Thiele-Innes priors, which are never drawn. "
+        "Use a separate --output-root per value",
+    )
+    parser.add_argument(
         "--limit", type=int, help="cap systems per unit (smoke tests only)"
     )
     parser.add_argument(
@@ -163,6 +175,8 @@ def main(argv=None):
         C.N_PRIOR_SAMPLES = args.n_prior_samples
     if args.top_k is not None:
         C.TOP_K = args.top_k
+    if args.sigma_a0 is not None:
+        C.SIGMA_A0_AU = args.sigma_a0
 
     units = work_units(args.populations, args.n_parts)
     if args.max_units:
@@ -191,10 +205,13 @@ def main(argv=None):
         write_manifest(described, args, size)
         print(f"wrote       : {C.manifest_path().name}\n", flush=True)
 
+    # Strided, not contiguous -- per-unit cost here is linear in the padded epoch
+    # count and unit order is sky order, so contiguous slices hand one rank a
+    # whole patch of expensive sky. See `mpi.stride_for_rank`.
     summaries = []
-    for population, shard, n_shards, part, n_parts in units[
-        slice(*mpi.slice_for_rank(len(units), rank, size))
-    ]:
+    for population, shard, n_shards, part, n_parts in mpi.stride_for_rank(
+        units, rank, size
+    ):
         summaries.append(
             run_unit(
                 population,

@@ -210,6 +210,68 @@ def test_library_is_shareable():
 # ==========================================================================
 # One system, through fit_system
 # ==========================================================================
+def test_census_definitions():
+    """The three flags the whole recovery story now rests on."""
+    import pyarrow as pa
+
+    from epochalypse.harv import census
+
+    floor = C.PERIOD_MIN_YR
+    table = pa.table(
+        {
+            # at the floor, just above it, mid-range, and above the ceiling
+            "period_best_yr": pa.array([floor, floor * 3, 2.0, 2.0]),
+            "period_1": pa.array([0.5, 0.5, 2.01, 500.0]),
+        }
+    )
+    check(
+        "railed is the best sample sitting at the prior floor",
+        list(census.railed(table)) == [True, False, False, False],
+        f"floor {floor:g} x RAIL_FACTOR {C.RAIL_FACTOR:g} = {floor * C.RAIL_FACTOR:g} yr",
+    )
+    check(
+        "in_search_range excludes truths the prior cannot reach",
+        list(census.in_search_range(table, "1_companion")) == [True, True, True, False],
+        f"searched range {C.PERIOD_MIN_YR:g}-{C.PERIOD_MAX_YR:g} yr",
+    )
+    check(
+        "railing is judged on P_best, being in range on P_true",
+        bool(census.railed(table)[0])
+        and bool(census.in_search_range(table, "1_companion")[0]),
+        "a railed system can still be one that *could* have been recovered",
+    )
+
+    edges = np.array([0.0, 1.0, 2.0, 3.0])
+    check(
+        "bin_index folds the top edge into the last bin, not past it",
+        list(census.bin_index([-5.0, 0.5, 2.9, 3.0], edges)) == [0, 0, 2, 2],
+        "np.digitize alone drops a value equal to the last edge -- which for any "
+        "binning built from nanmax is always the most interesting system",
+    )
+
+
+def test_stride_partitions():
+    """A striding bug silently drops or duplicates work, so assert the partition."""
+    from epochalypse import mpi
+
+    for n_items, size in ((2880, 1536), (960, 320), (7, 3), (3, 7)):
+        units = list(range(n_items))
+        shares = [mpi.stride_for_rank(units, r, size) for r in range(size)]
+        flat = sorted(x for share in shares for x in share)
+        sizes = {len(share) for share in shares}
+        check(
+            f"stride partitions {n_items} items over {size} ranks",
+            flat == units and max(sizes) - min(sizes) <= 1,
+            f"share sizes {sorted(sizes)}",
+        )
+    check(
+        "and it decorrelates position from rank, unlike a contiguous slice",
+        mpi.stride_for_rank(list(range(960)), 0, 320) == [0, 320, 640]
+        and list(range(*mpi.slice_for_rank(960, 0, 320))) == [0, 1, 2],
+        "rank 0 gets units 0/320/640 rather than 0/1/2",
+    )
+
+
 def test_fit_system():
     arrays = fake_system(n_epochs=90, period=1.7, alpha=1.5, seed=4)
     lib, prior = L.draw(N_LIB), L.prior()

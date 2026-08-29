@@ -15,6 +15,25 @@ import pyarrow.dataset as ds
 from ..periodogram import config as PG
 from . import config as C
 
+# Binning shared by the text census and the figures, so the two cut the sample
+# identically. The period edges span the *searched* range -- there is no point
+# resolving decades the prior no longer covers -- so they follow PERIOD_MIN_YR /
+# PERIOD_MAX_YR rather than being fixed numbers.
+LOG_PERIOD_BINS = np.array([-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
+ECC_BINS = np.array([0.0, 0.3, 0.5, 0.7, 0.9, 1.0])
+
+
+def bin_index(values, bins):
+    """`np.digitize` with the top edge folded into the last bin.
+
+    `digitize` puts a value equal to the last edge *past* the final bin, so a
+    plain `digitize(...) - 1` silently drops it. That is invisible for period
+    bins but guaranteed for any binning built from `nanmax`, where the largest
+    value always sits exactly on the edge -- and for an SNR scan that is the
+    most interesting system in the sample.
+    """
+    return np.clip(np.digitize(np.asarray(values, float), bins) - 1, 0, len(bins) - 2)
+
 
 def read_systems(population, columns=None):
     """One population's per-system rows, merged file if present else the shards.
@@ -79,6 +98,42 @@ def recovered(table, population):
             ]
         )
     return np.nanmin(offsets, axis=1) < np.log(PG.PERIOD_RECOVER_TOL)
+
+
+def railed(table):
+    """Did the fit collapse to the "no orbit" solution at the prior floor?
+
+    The Thiele-Innes amplitude prior scales as `(P/P0)^(2/3)`, so the shortest
+    period in the prior is where an orbit is forced to zero amplitude and the
+    model reduces to a five-parameter astrometric fit. A best sample sitting
+    there is a **non-detection**, which is a different failure from finding the
+    wrong period -- and on the first 300k-system run it was 65% of all misses,
+    so a recovery percentage that mixes the two says very little.
+
+    Relative to `PERIOD_MIN_YR`, never an absolute period, so it follows the
+    prior when the bounds move.
+    """
+    return np.asarray(table["period_best_yr"], float) < (
+        C.PERIOD_MIN_YR * C.RAIL_FACTOR
+    )
+
+
+def in_search_range(table, population):
+    """Could this system have been recovered at all?
+
+    `PERIOD_MIN_YR`/`PERIOD_MAX_YR` are narrower than the injected prior on
+    purpose (see `config`), so a system injected outside them is unrecoverable
+    by construction rather than by measurement. Counting those as failures
+    understates the method and makes the narrowed prior look worse than it is,
+    so every recovery number should be quoted over this subset with the
+    out-of-range count stated beside it.
+
+    Judged on the matched companion, the same one `recovered()` scores against.
+    """
+    if C.POPULATIONS[population] == 0:
+        return None
+    truth = best_truth(table, population, "period")
+    return (truth >= C.PERIOD_MIN_YR) & (truth <= C.PERIOD_MAX_YR)
 
 
 def best_truth(table, population, name):

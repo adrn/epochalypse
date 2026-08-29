@@ -37,6 +37,7 @@ import pyarrow.parquet as pq
 from epochalypse.harv import census
 from epochalypse.harv import config as C
 from epochalypse.harv import figures as F
+from epochalypse.periodogram import config as PG
 
 STAGES = ("census", "recovery", "figures", "merge")
 
@@ -53,8 +54,8 @@ _period_columns = census.period_columns
 
 def stage_census(args):
     header = (
-        f"{'population':<26}{'n':>10}{'ESS med':>10}{'ESS<10':>9}"
-        f"{'wcap med':>10}{'wcap low':>10}{'P recovered':>13}"
+        f"{'population':<26}{'n':>10}{'ESS med':>10}{'ESS<10':>9}{'ESS bad':>9}"
+        f"{'wcap med':>10}{'wcap low':>10}{'railed':>9}{'P recovered':>13}"
     )
     print(header)
     print("-" * len(header))
@@ -78,22 +79,50 @@ def stage_census(args):
                 continue
             ess = np.asarray(rows["ess"], float)
             wcap = np.asarray(rows["weight_captured"], float)
+            # A system whose log-likelihoods are ALL non-finite gives ESS = NaN.
+            # np.median then poisons the whole column, and `nan < ESS_RESOLVED`
+            # is False so it would also be silently counted as *resolved*. Both
+            # were live bugs. The count is a diagnostic in its own right: it
+            # means bad input reached the likelihood without anything raising,
+            # so the `failed/` CSVs never saw it.
+            finite = np.isfinite(ess)
+            n_bad = int((~finite).sum())
             if n_companions:
-                recovered = _recovered(rows, population)
-                recovered_txt = f"{np.nanmean(recovered):>12.1%}"
+                # Quoted over the searched period range: a system injected
+                # outside it cannot be recovered by construction, and counting
+                # those as failures understates the method.
+                searchable = census.in_search_range(rows, population)
+                recovered = _recovered(rows, population)[searchable]
+                recovered_txt = (
+                    f"{np.nanmean(recovered):>12.1%}"
+                    if recovered.size
+                    else f"{'--':>12}"
+                )
+                railed_txt = f"{census.railed(rows).mean():>8.1%}"
             else:
                 recovered_txt = f"{'--':>12}"
+                railed_txt = f"{census.railed(rows).mean():>8.1%}"
             print(
-                f"{population + label:<26}{n:>10,}{np.median(ess):>10.1f}"
-                f"{np.mean(ess < C.ESS_RESOLVED):>9.1%}{np.median(wcap):>10.4f}"
-                f"{np.mean(wcap < C.WEIGHT_CAPTURED_MIN):>10.1%}{recovered_txt}"
+                f"{population + label:<26}{n:>10,}{np.nanmedian(ess):>10.1f}"
+                f"{np.mean(ess[finite] < C.ESS_RESOLVED):>9.1%}{n_bad:>9,}"
+                f"{np.nanmedian(wcap):>10.4f}"
+                f"{np.mean(wcap < C.WEIGHT_CAPTURED_MIN):>10.1%}"
+                f"{railed_txt}{recovered_txt}"
             )
     print(
-        f"\nESS<10 is the share whose posterior the {C.N_PRIOR_SAMPLES:,}-sample "
-        "library did not resolve --\nthose systems have a good point estimate and "
-        "an unmeasured uncertainty, and are the\ncandidates for an MCMC second "
-        f"pass. wcap low is the share where TOP_K={C.TOP_K} truncated\nmore than "
+        f"\nESS<10   share the {C.N_PRIOR_SAMPLES:,}-sample library did not resolve. Those"
+        "\n         have a good point estimate and an unmeasured uncertainty, and are"
+        "\n         the candidates for an MCMC second pass."
+        f"\nESS bad  systems whose log-likelihoods were ALL non-finite. Should be 0;"
+        "\n         anything else means bad input reached the likelihood silently."
+        f"\nwcap low share where TOP_K={C.TOP_K} truncated more than "
         f"{1 - C.WEIGHT_CAPTURED_MIN:.0%} of the posterior mass."
+        f"\nrailed   share whose best sample sits at the prior floor "
+        f"({C.PERIOD_MIN_YR * C.RAIL_FACTOR:g} yr) -- a NON-detection,"
+        "\n         not a wrong period. On the first production run this was 65% of"
+        "\n         all recovery failures, so the two are reported apart."
+        f"\nP recov  over the searched range only ({C.PERIOD_MIN_YR:g}-{C.PERIOD_MAX_YR:g} yr);"
+        "\n         systems injected outside it are unrecoverable by construction."
     )
 
 
@@ -125,8 +154,8 @@ def stage_recovery(args):
     """
     import pandas as pd
 
-    log_bins = [-5, -2, -1, -0.5, 0, 0.5, 1, 4]
-    ecc_bins = [0, 0.3, 0.5, 0.7, 0.9, 1.0]
+    log_bins = census.LOG_PERIOD_BINS
+    ecc_bins = census.ECC_BINS
     for population in args.populations:
         n_companions = C.POPULATIONS[population]
         if not n_companions:
@@ -141,13 +170,28 @@ def stage_recovery(args):
         high_snr = _high_snr_mask(table, population)
         frame = table.to_pandas()
         frame["recovered"] = _recovered(table, population)
+        frame["railed"] = census.railed(table)
+        frame["searchable"] = census.in_search_range(table, population)
+        # of whichever companion `recovered()` matched, so the SNR binning below
+        # describes the orbit that was actually found
+        frame["snr_total_best"] = census.best_truth(table, population, "snr_total")
         frame = frame[high_snr] if high_snr is not None else frame
         if frame.empty:
             continue
         # Companion 1 labels the bins. For 2_companion that is a simplification
         # -- recovery is scored against either orbit but binned by the first.
         frame["log_period"] = np.log10(frame["period_1"])
+        outside = int((~frame["searchable"]).sum())
         print(f"\n--- {population}, high-SNR only ({len(frame):,} systems) ---")
+        print(
+            f"  {outside:,} ({outside / max(len(frame), 1):.1%}) injected outside the "
+            f"searched range {C.PERIOD_MIN_YR:g}-{C.PERIOD_MAX_YR:g} yr and cannot be\n"
+            "  recovered by construction. Every recovery number below is over the "
+            f"remaining {len(frame) - outside:,}."
+        )
+        frame = frame[frame["searchable"].astype(bool)]
+        if frame.empty:
+            continue
 
         for label, key, bins in (
             ("injected period (log10 yr)", "log_period", log_bins),
@@ -167,30 +211,61 @@ def stage_recovery(args):
                     f"recovered {row['recovered']:>6.1%}  ESS med {row['ess']:>6.1f}"
                 )
 
-        # Where do the failures land? With ESS ~ 1 the answer is a single prior
-        # draw, and an astrometric likelihood is multi-modal: the annual
-        # parallax term puts aliases at 1/P +- 1/yr, and 2P / P/2 also compete.
-        # If the misses cluster at particular ratios they are aliases -- more
-        # samples make the true mode reliably win. If they are spread flat, the
-        # data simply does not constrain those systems.
+        # Split the failures. Railing is a NON-detection -- the fit collapsed to
+        # the prior floor where the amplitude is forced to zero -- and it is a
+        # different thing from finding the wrong period. On the first production
+        # run it was 65% of all misses, so reporting one number for both said
+        # very little.
         missed = frame[~frame["recovered"].astype(bool)]
         if len(missed):
-            ratio = np.log10(
-                np.asarray(missed["period_best_yr"], float)
-                / np.asarray(missed["period_1"], float)
-            )
-            ratio = ratio[np.isfinite(ratio)]
-            edges = [-9, -3, -1, -0.5, -0.3, -0.1, 0.1, 0.3, 0.5, 1, 3, 9]
-            counts, _ = np.histogram(ratio, bins=edges)
-            print(f"\n  where the {len(missed):,} misses landed, log10(P_best/P_true):")
-            for lo, hi, n in zip(edges[:-1], edges[1:], counts):
-                if not n:
-                    continue
-                bar = "#" * round(40 * n / counts.max())
-                print(f"    {lo:>5.1f} to {hi:>4.1f}  {n:>6,}  {bar}")
+            n_rail = int(missed["railed"].sum())
+            wrong = missed[~missed["railed"].astype(bool)]
+            print(f"\n  {len(missed):,} misses:")
             print(
-                f"    railed at the prior edge (P_best < 1e-3 yr): "
-                f"{(np.asarray(missed['period_best_yr'], float) < 1e-3).sum():,}"
+                f"    railed (no detection)  {n_rail:>6,}  "
+                f"{n_rail / len(missed):>6.1%}  best sample at the prior floor"
+            )
+            print(
+                f"    wrong period           {len(wrong):>6,}  "
+                f"{len(wrong) / len(missed):>6.1%}"
+            )
+            if len(wrong):
+                ratio = np.log10(
+                    np.asarray(wrong["period_best_yr"], float)
+                    / np.asarray(wrong["period_1"], float)
+                )
+                ratio = ratio[np.isfinite(ratio)]
+                edges = [-4, -1, -0.5, -0.3, -0.1, 0.1, 0.3, 0.5, 1, 4]
+                counts, _ = np.histogram(ratio, bins=edges)
+                print("\n  wrong-period misses, log10(P_best/P_true) -- clustered on")
+                print("  the 2x (0.30) or annual tracks means an alias, flat means")
+                print("  the data does not constrain them:")
+                for lo, hi, n in zip(edges[:-1], edges[1:], counts):
+                    if not n:
+                        continue
+                    bar = "#" * round(40 * n / counts.max())
+                    print(f"    {lo:>5.1f} to {hi:>4.1f}  {n:>6,}  {bar}")
+
+        # Rail fraction against SNR. This is the curve that says whether the
+        # amplitude prior is setting the detection threshold: sigma_a0 controls
+        # the Occam penalty on a real orbit relative to the null, so if railing
+        # falls off a cliff at some SNR and is near zero above it, that cliff IS
+        # the threshold -- and it should sit at HIGH_SNR_MIN, not above it.
+        snr = np.asarray(frame["snr_total_best"], float)
+        frame["log_snr"] = np.log10(np.maximum(snr, 1e-3))
+        bins = np.linspace(np.log10(PG.HIGH_SNR_MIN), np.nanmax(frame["log_snr"]), 9)
+        print(f"\n  rail fraction vs SNR (HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}):")
+        index = census.bin_index(frame["log_snr"], bins)
+        for b in range(len(bins) - 1):
+            sel = index == b
+            if not sel.sum():
+                continue
+            rail = frame["railed"].to_numpy()[sel].mean()
+            rec = frame["recovered"].to_numpy()[sel].mean()
+            bar = "#" * round(30 * rail)
+            print(
+                f"    SNR {10 ** bins[b]:>7.1f}-{10 ** bins[b + 1]:<7.1f} "
+                f"n={int(sel.sum()):>6,}  railed {rail:>6.1%}  recovered {rec:>6.1%}  {bar}"
             )
 
         # The grid is the point: it says whether a low headline number is the

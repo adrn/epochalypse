@@ -46,6 +46,33 @@ def slice_for_rank(n_items, rank, size):
     return start, stop
 
 
+def stride_for_rank(items, rank, size):
+    """This rank's interleaved share -- `items[rank::size]`.
+
+    The alternative to `slice_for_rank`, and the choice between them is about
+    whether per-item cost is flat.
+
+    Contiguous slicing is right when it is: the periodogram's cost varies ~15%
+    across the catalog because the frequency loop dominates, so I/O locality is
+    worth more than balance and a rank streams a contiguous region of one
+    population's directory.
+
+    It is wrong when cost varies with the same thing the ordering follows. The
+    harv stage costs time linear in a system's padded epoch count, work units
+    are ordered by shard, and shard order is sky order -- so a contiguous slice
+    is a contiguous patch of sky with correlated transit counts. Measured on the
+    first production run: per-unit cost varied 2.4x and 44% of the allocation
+    sat idle waiting for the ranks that drew the expensive shards. Striding
+    decorrelates cost from rank at the price of I/O locality, which that stage
+    can afford -- it spends ~25 s of compute per system against reading one row
+    group.
+
+    Returns the items themselves rather than bounds, because a stride is not
+    expressible as a `start, stop` pair.
+    """
+    return items[rank::size]
+
+
 def banner(comm, size, n_items, item="sources", **extra):
     """Rank 0's header: fleet size, work per rank, and the threading warning.
 
