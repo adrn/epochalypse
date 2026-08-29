@@ -39,10 +39,18 @@ SUBMIT=scripts/benchmarks/bench_harv.sh
 SWEEP=scripts/benchmarks/sweep_sigma_a0.sh
 LOGS=scripts/benchmarks/logs
 
-# Always includes the current setting as a control arm: a sweep runs at a
-# smaller library size to stay cheap, which lowers recovery everywhere, so only
-# the relative comparison at fixed M means anything.
-SIGMA_A0_ARMS=(1.0 0.1 0.03 0.01)
+# 1.0 is the current setting and stays as the reference arm; the rest extend
+# DOWNWARD because the first sweep (at M=1e5) improved monotonically all the way
+# to 0.01 without bracketing an optimum, and without the bright end degrading:
+#
+#   sigma_a0   recovered  railed  |  SNR 5-10   SNR 10-20   SNR >80
+#        1.0      28.8%   22.5%   |  42% / 3%   21% / 24%   0% / 75%
+#        0.1      31.0%   20.0%   |  40% / 4%   16% / 28%   0% / 77%
+#       0.03      34.1%   17.7%   |  37% / 9%   13% / 32%   0% / 75%
+#       0.01      35.0%   14.2%   |  28% / 9%   12% / 33%   0% / 80%
+#
+# 0.01 is still ~50x the median injected a0 of 2e-4 AU, so there is room below.
+SIGMA_A0_ARMS=(1.0 0.01 0.003 0.001 0.0003)
 
 # ==========================================================================
 # summary -- read the logs, no submitting

@@ -257,6 +257,34 @@ Note `sigma_a0` does **not** change the library fingerprint — it only affects
 the analytically marginalized Thiele-Innes priors, which are never drawn — so
 each arm needs its own `--output-root`. The sweep script handles that.
 
+### First sweep — monotonic, and the bright end held
+
+Run at M = 10⁵ (before the default moved to 10⁷), 1,407 high-SNR `1_companion`
+systems per arm:
+
+| `sigma_a0` | recovered | railed | SNR 5–10 | SNR 10–20 | SNR > 80 |
+| --- | --- | --- | --- | --- | --- |
+| 1.0 | 28.8% | 22.5% | 42% / 3% | 21% / 24% | 0% / 75% |
+| 0.1 | 31.0% | 20.0% | 40% / 4% | 16% / 28% | 0% / 77% |
+| 0.03 | 34.1% | 17.7% | 37% / 9% | 13% / 32% | 0% / 75% |
+| **0.01** | **35.0%** | **14.2%** | 28% / 9% | 12% / 33% | 0% / 80% |
+
+Three readings:
+
+**Monotonic, no optimum yet.** Every metric still improves at 0.01, which is
+itself ~50× the median injected `a0` of 2×10⁻⁴ AU. The arms now extend to
+3×10⁻⁴.
+
+**The bias risk did not materialize.** `SNR > 80` recovery went 75% → 80%, if
+anything better. The bright systems' likelihood evidently dominates their prior
+even when it is two orders of magnitude too narrow for them.
+
+**The gain here is understated.** Railing fell 8.3 points but recovery rose only
+6.2 — so 2.1 points moved from *railed* to *wrong period* rather than to
+*recovered*. That is the M = 10⁵ resolution limit: un-railing a system at a small
+library lets it find *an* orbit, not necessarily the right one. At M = 10⁷ more
+of those should convert, which is why the sweep now defaults there.
+
 ## Open questions
 
 1. **~2× of the 6.3× core gap is unexplained.** Worth 10 minutes: it is a
