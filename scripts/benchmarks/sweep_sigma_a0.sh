@@ -20,7 +20,7 @@
 # Arguments (all optional after the first):
 #   $1  sigma_a0 in AU at P0            (required)
 #   $2  HIGH-SNR systems per population (default 2000)
-#   $3  prior library size              (default 1000000, the production value)
+#   $3  prior library size              (default 10000000)
 #
 # ==========================================================================
 # WHY IT RUNS AT THE PRODUCTION LIBRARY SIZE
@@ -28,7 +28,10 @@
 # A cheaper library would confound the two effects this is trying to separate.
 # At M=1e5 a system can rail because the library never found its orbit, which
 # looks identical to railing because the amplitude prior made the null cheaper.
-# Only at the production M does a rail mean what the sweep needs it to mean.
+# The default is 1e7 -- ten times the production run -- so that a rail is
+# unambiguously a statement about the PRIOR and not about resolution. There is
+# no point measuring a detection threshold with a library that imposes one of
+# its own.
 #
 # That is affordable because the sweep spends its budget on the systems that
 # carry the signal instead of a random draw:
@@ -39,11 +42,14 @@
 #
 # 2,000 high-SNR systems per arm, four arms:
 #
-#     M=1e6      56 core-h,  ~9 min on one genoa node
-#     M=1e7     502 core-h,  ~1.3 h  on one genoa node
+#     M=1e7     502 core-h,  ~1.3 h  on one genoa node   <- the default
+#     M=1e6      56 core-h,  ~9 min   (pass 1000000 as $3)
 #
-# M=1e7 needs ~7.5 GB/rank -- 722 GB of a 1.5 TB node at 96 ranks. It fits, but
-# confirm with scripts/benchmarks/bench_harv.sh before running four arms of it.
+# MEMORY. M=1e7 is projected at ~7.5 GB/rank -- 722 GB of a 1.5 TB node at 96
+# ranks, so ~2x headroom, but that is EXTRAPOLATED from a measurement at M=1e6.
+# harv_mpi.py now reports the real peak RSS per rank in its summary, so the
+# first arm to finish settles it. If it comes back near 15 GB/rank, resubmit the
+# rest with --ntasks-per-node=64.
 #
 # ==========================================================================
 # WHY THIS SWEEP EXISTS
@@ -96,7 +102,7 @@
 set -u
 SIGMA_A0=${1:?usage: sbatch scripts/benchmarks/sweep_sigma_a0.sh <sigma_a0 AU> [n_high_snr] [M]}
 SUBSAMPLE=${2:-2000}
-N_PRIOR=${3:-1000000}
+N_PRIOR=${3:-10000000}
 MIN_SNR=${MIN_SNR:-5}
 
 cd /mnt/home/apricewhelan/work/epochalypse

@@ -33,7 +33,10 @@ cores.
 
 import argparse
 import json
+import os
 import platform
+import resource
+import sys
 import time
 from pathlib import Path
 
@@ -247,8 +250,15 @@ def main(argv=None):
             )
         )
 
+    # Peak RSS, so the memory question is measured on every run rather than
+    # extrapolated. It is the number that decides ranks-per-node, and at large
+    # N_PRIOR_SAMPLES the library dominates it.
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_gb = peak / 1e9 if sys.platform == "darwin" else peak / 1e6
+
     mine = {
         "rank": rank,
+        "peak_rss_gb": peak_gb,
         "fingerprint": described["fingerprint"],
         "n_units": len(summaries),
         "n_systems": sum(s["n_systems"] for s in summaries),
@@ -276,6 +286,16 @@ def main(argv=None):
             )
         # The one thing that would silently invalidate every comparison in the
         # output: two ranks measuring against two different priors.
+        worst = max(s["peak_rss_gb"] for s in everyone)
+        per_node = int(os.environ.get("SLURM_NTASKS_PER_NODE") or 0)
+        print(
+            f"  peak RSS     : {worst:.1f} GB/rank"
+            + (
+                f"  ->  {worst * per_node:.0f} GB per node at {per_node} ranks"
+                if per_node
+                else ""
+            )
+        )
         print(
             f"  library      : {prints.pop()} on every rank"
             if len(prints) == 1
