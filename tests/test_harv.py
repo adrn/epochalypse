@@ -44,6 +44,23 @@ N_LIB = 4000
 K = 32
 
 
+def _run_smoke_unit(population, n_prior=3000, top_k=16):
+    """One small unit into the current output root, for tests that need output."""
+    from epochalypse.periodogram.shards import discover_shards
+
+    numbers, n_shards = discover_shards(population)
+    unit.run_unit(
+        population,
+        numbers[0],
+        n_shards,
+        prior_samples=L.draw(n_prior),
+        top_k=top_k,
+        limit=None,
+        verbose=False,
+        progress_every=0,
+    )
+
+
 def check(name, condition, detail=""):
     """Assert, and say what was checked -- the detail is the useful half here."""
     assert condition, f"{name}" + (f"   ({detail})" if detail else "")
@@ -221,6 +238,68 @@ def test_library_is_shareable():
 # ==========================================================================
 # One system, through fit_system
 # ==========================================================================
+def test_gallery():
+    """The Thiele-Innes -> a0 identity, and that the cell selection is capped."""
+    import jax.numpy as jnp
+    from harv.models.parameterizations.gaia import thiele_innes_ABFG
+
+    from epochalypse.harv import gallery
+
+    # Round trip: build A,B,F,G from Campbell elements with harv's own routine,
+    # then recover a0 with the Halbwachs & Pourbaix identity the panel uses.
+    rng = np.random.default_rng(7)
+    worst = 0.0
+    for _ in range(200):
+        a0, omega, node = (
+            rng.uniform(0.01, 5),
+            rng.uniform(0, 2 * np.pi),
+            rng.uniform(0, 2 * np.pi),
+        )
+        cos_i = rng.uniform(-1, 1)
+        abfg = [
+            a0 * float(v)
+            for v in thiele_innes_ABFG(
+                jnp.cos(omega), jnp.sin(omega), jnp.cos(node), jnp.sin(node), cos_i
+            )
+        ]
+        worst = max(worst, abs(gallery.semi_major_axis_mas(*abfg) / a0 - 1))
+    check(
+        "a0 recovered from the Thiele-Innes constants, over 200 random orbits",
+        worst < 1e-6,
+        f"worst relative error {worst:.2e}",
+    )
+    check(
+        "a zero-amplitude orbit gives a0 = 0 -- the null the rail threshold sits at",
+        gallery.semi_major_axis_mas(0.0, 0.0, 0.0, 0.0) == 0.0,
+    )
+
+    if CATALOG_ROOT is None:
+        print("  [skip] cell selection needs --catalog-root")
+        return
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        C.set_catalog_root(CATALOG_ROOT)
+        C.set_output_root(tmp)
+        _run_smoke_unit("1_companion")
+        chosen = gallery.select("1_companion", per_bin=2)
+    counts = chosen.groupby("cell", observed=True).size()
+    check(
+        "the selection actually found systems to bin",
+        len(counts) > 0,
+        f"{len(chosen)} system(s) in {len(counts)} cell(s)",
+    )
+    check(
+        "no cell gets more than per_bin systems",
+        counts.max() <= 2,
+        f"largest cell holds {counts.max()}",
+    )
+    check(
+        "every selection carries the address needed to re-read its epochs",
+        {"shard", "shard_row", "gaia_source_id", "cell"} <= set(chosen.columns),
+    )
+
+
 def test_census_definitions():
     """The three flags the whole recovery story now rests on."""
     import pyarrow as pa

@@ -21,6 +21,11 @@
 #             whether a low recovery number is the 5.5 yr baseline's fault
 #             (unrecoverable by construction), the prior's, or the library's.
 #   figures   the same information as four PNGs, in $HARV_ROOT/figures/
+#   gallery   per-system diagnostics: the data, the reconstructed model and the
+#             posterior samples, for GALLERY_PER_BIN systems from each cell of a
+#             (SNR, injected period) grid. Needs --catalog-root, because it is
+#             the only stage that reads epochs. Look at the 0.79-1.26 yr cells
+#             first -- a one-year orbit is degenerate with parallax
 #   merge     last, because it is the only stage that writes much
 #
 # Read the output in that order too. A single recovery percentage is close to
@@ -38,10 +43,13 @@ export MKL_NUM_THREADS=1
 export JAX_PLATFORMS=cpu
 
 date
-python scripts/harv_finish.py --output-root $HARV_ROOT \
-    --stages census recovery figures merge
+python scripts/harv_finish.py --output-root $HARV_ROOT --catalog-root $OUT_ROOT \
+    --stages census recovery figures gallery merge
 date
 
 echo
 echo "diagnostics written to $HARV_ROOT/figures:"
 ls -1 $HARV_ROOT/figures 2>/dev/null
+echo
+echo "per-system gallery (start with the logP-0.1to+0.1 cells):"
+ls -1 $HARV_ROOT/figures/gallery/*/ 2>/dev/null | head -20

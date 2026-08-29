@@ -269,6 +269,21 @@ SAMPLES_FLUSH_EVERY = 200  # ~12 MB of float32 samples per row group
 SAMPLE_DTYPE = "float32"
 
 # ==========================================================================
+# Per-system diagnostic gallery
+# ==========================================================================
+# Individual systems, chosen by a 2-D grid in (SNR, injected period), so the
+# gallery spans the regimes rather than whichever systems happen to be first.
+# There is no point plotting 100,000 of them; a handful per cell is enough to
+# see what a regime looks like, and the cells are what make it representative.
+#
+# The period edges deliberately isolate 0.79-1.26 yr. That cell is the one to
+# look at first: a one-year orbit is degenerate with parallax, which is a free
+# linear parameter in the model, so its posterior should be visibly BIMODAL --
+# one mode attributing the signal to a companion, one to parallax.
+GALLERY_PER_BIN = 8
+GALLERY_LOG_PERIOD_BINS = (-2.0, -1.0, -0.5, -0.1, 0.1, 0.5, 1.0, 2.0)
+
+# ==========================================================================
 # Subsampling
 # ==========================================================================
 # `None` runs the full catalog. An integer runs approximately that many systems

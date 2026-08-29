@@ -17,6 +17,10 @@ Stages:
            whether a low number is the data's fault or the prior's
   figures  four diagnostic PNGs -- see epochalypse.harv.figures for what each
            one answers and the order to read them in
+  gallery  per-system diagnostics -- the data, the model and the posterior
+           samples for a few systems from each (SNR, period) cell. Needs
+           --catalog-root, because it reads the epochs. Start with the
+           0.79-1.26 yr cells: a one-year orbit is degenerate with parallax
   merge    each population's per-system shards -> one parquet
 
 **The samples are never merged.** They are ~850 GB across the catalog; read them
@@ -37,9 +41,10 @@ import pyarrow.parquet as pq
 from epochalypse.harv import census
 from epochalypse.harv import config as C
 from epochalypse.harv import figures as F
+from epochalypse.harv import gallery as G
 from epochalypse.periodogram import config as PG
 
-STAGES = ("census", "recovery", "figures", "merge")
+STAGES = ("census", "recovery", "figures", "gallery", "merge")
 
 CENSUS_COLUMNS = ["ess", "weight_captured", "period_best_yr"]
 
@@ -294,6 +299,15 @@ def stage_figures(args):
         del path
 
 
+def stage_gallery(args):
+    """Per-system figures. Reads epochs, so it needs the catalog as well."""
+    for population in args.populations:
+        if not C.POPULATIONS[population]:
+            continue  # the control has no injected period to bin on
+        print(f"{population}:")
+        G.make_gallery(population, args.per_bin)
+
+
 def stage_merge(args):
     for population in args.populations:
         table = _systems(population)
@@ -327,6 +341,17 @@ def main(argv=None):
     )
     parser.add_argument("--output-root", type=Path)
     parser.add_argument(
+        "--catalog-root",
+        type=Path,
+        help="the catalog to read epochs from (gallery only)",
+    )
+    parser.add_argument(
+        "--per-bin",
+        type=int,
+        default=None,
+        help=f"gallery systems per (SNR, period) cell (default {C.GALLERY_PER_BIN})",
+    )
+    parser.add_argument(
         "--figures",
         nargs="+",
         choices=list(F.FIGURES),
@@ -337,6 +362,8 @@ def main(argv=None):
 
     if args.output_root:
         C.set_output_root(args.output_root)
+    if args.catalog_root:
+        C.set_catalog_root(args.catalog_root)
 
     if C.manifest_path().exists():
         manifest = json.loads(C.manifest_path().read_text())
@@ -357,6 +384,7 @@ def main(argv=None):
             "census": stage_census,
             "recovery": stage_recovery,
             "figures": stage_figures,
+            "gallery": stage_gallery,
             "merge": stage_merge,
         }[stage](args)
         print()

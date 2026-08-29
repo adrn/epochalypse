@@ -425,8 +425,41 @@ recovery is high is correct. ESS says "the library did not sample this
 posterior", never "the answer is wrong".
 
 **4. `harv_detection`** — `logZ_int` per population, with `0_companion` as the
-null distribution, and the completeness curve against injected SNR. The control
-is the same one the periodogram stage calibrates its thresholds on.
+null distribution, the completeness curve against injected SNR, and the rail
+rate against SNR. That last panel is about the *prior*: `sigma_a0` fixes the
+Occam penalty a real orbit pays against the null, so if railing falls off a
+cliff well above `HIGH_SNR_MIN`, the amplitude prior is setting the detection
+threshold rather than the data.
+
+### Per-system: `--stages gallery`
+
+The four figures above say how often the fit works. They cannot say what happens
+when it does not. `gallery` draws `GALLERY_PER_BIN` systems from each cell of a
+(SNR, injected period) grid — enough to see what a regime looks like, chosen by
+`gaia_source_id` order so the same catalog always gives the same gallery.
+
+It needs `--catalog-root`: it is the only stage that reads epochs. Four panels
+per system, into `figures/gallery/<population>/<cell>/`:
+
+| panel | what it shows |
+| --- | --- |
+| data minus the astrometric solution, vs time | the ~1 mas signal, after removing the ~250 mas parallax and proper motion that would otherwise hide it |
+| model vs data, with a 1:1 line and χ²/N | whether the best-weight draw explains the signal. **Not** a phase fold — along-scan is a 1-D projection at a scan angle that changes every epoch, so a fold never closes up even for a perfect fit |
+| period vs parallax, coloured by weight | the degeneracy panel |
+| a₀ vs period, coloured by weight | the null mode, at `a₀ → 0` and the prior floor |
+
+**Look at the 0.79–1.26 yr cells first.** A one-year orbit is degenerate with
+parallax, because parallax is a free linear parameter with a deliberately broad
+prior, so the same along-scan signal can be attributed to either. If that
+degeneracy is real those posteriors are **bimodal** — one mode with a companion
+and a normal parallax, one with no companion and an inflated one — and the third
+panel is drawn to show it.
+
+The model is reconstructed with harv's own `_base_design_matrix`, so
+`AL = X @ theta` over the nine stored linear parameters and the orbit is the
+last four columns. The `a₀` panel uses the Halbwachs & Pourbaix identity harv
+applies in its Jacobian correction, verified to 10⁻¹⁴ against a Campbell round
+trip in the test suite.
 
 ### What a healthy run looks like
 

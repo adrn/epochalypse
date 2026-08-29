@@ -22,6 +22,10 @@ from . import config as C
 LOG_PERIOD_BINS = np.array([-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0])
 ECC_BINS = np.array([0.0, 0.3, 0.5, 0.7, 0.9, 1.0])
 
+# Fixed rather than derived from the data, so runs with different recovery rates
+# still line up column for column. Starts at the high-SNR floor.
+SNR_BINS = np.array([PG.HIGH_SNR_MIN, 10.0, 20.0, 40.0, 80.0, np.inf])
+
 
 def bin_index(values, bins):
     """`np.digitize` with the top edge folded into the last bin.
