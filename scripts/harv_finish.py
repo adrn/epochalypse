@@ -300,12 +300,20 @@ def stage_figures(args):
 
 
 def stage_gallery(args):
-    """Per-system figures. Reads epochs, so it needs the catalog as well."""
+    """Per-system figures. Reads epochs, so it needs the catalog as well.
+
+    Skips a population with no output rather than raising: this stage writes as
+    it goes, and losing the figures already drawn because a later population was
+    never simulated would be the wrong trade for a diagnostic.
+    """
     for population in args.populations:
         if not C.POPULATIONS[population]:
             continue  # the control has no injected period to bin on
         print(f"{population}:")
-        G.make_gallery(population, args.per_bin)
+        try:
+            G.make_gallery(population, args.per_bin)
+        except FileNotFoundError as error:
+            print(f"  skipping: {error}")
 
 
 def stage_merge(args):

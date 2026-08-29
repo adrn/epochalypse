@@ -244,6 +244,7 @@ def test_gallery():
     from harv.models.parameterizations.gaia import thiele_innes_ABFG
 
     from epochalypse.harv import gallery
+    from epochalypse.periodogram.shards import discover_shards
 
     # Round trip: build A,B,F,G from Campbell elements with harv's own routine,
     # then recover a0 with the Halbwachs & Pourbaix identity the panel uses.
@@ -298,6 +299,40 @@ def test_gallery():
         "every selection carries the address needed to re-read its epochs",
         {"shard", "shard_row", "gaia_source_id", "cell"} <= set(chosen.columns),
     )
+
+    # --n-parts splits a shard across several sample files, and the per-system
+    # table records the shard and the row but NOT the part. Naming the unsplit
+    # file works only for --n-parts 1, which is not what production runs -- this
+    # is the case that broke a real finish job.
+    with tempfile.TemporaryDirectory() as tmp:
+        C.set_catalog_root(CATALOG_ROOT)
+        C.set_output_root(tmp)
+        numbers, n_shards = discover_shards("1_companion")
+        for part in range(3):
+            unit.run_unit(
+                "1_companion",
+                numbers[0],
+                n_shards,
+                part,
+                3,
+                prior_samples=L.draw(2000),
+                top_k=16,
+                verbose=False,
+                progress_every=0,
+            )
+        files = sorted(p.name for p in C.samples_dir("1_companion").glob("*.parquet"))
+        check(
+            "a split shard really does write one file per part",
+            len(files) == 3 and all("_part" in f for f in files),
+            files[0],
+        )
+        rows = list(range(4))
+        got = gallery.read_samples("1_companion", numbers[0], n_shards, rows)
+        check(
+            "read_samples finds rows across the parts, not just part 0",
+            set(got["shard_row"]) == set(rows),
+            f"asked for {rows}, got {sorted(got['shard_row'])}",
+        )
 
 
 def test_census_definitions():

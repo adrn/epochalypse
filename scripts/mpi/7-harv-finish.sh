@@ -52,4 +52,4 @@ echo "diagnostics written to $HARV_ROOT/figures:"
 ls -1 $HARV_ROOT/figures 2>/dev/null
 echo
 echo "per-system gallery (start with the logP-0.1to+0.1 cells):"
-ls -1 $HARV_ROOT/figures/gallery/*/ 2>/dev/null | head -20
+find $HARV_ROOT/figures/gallery -mindepth 2 -maxdepth 2 -type d 2>/dev/null | head -20

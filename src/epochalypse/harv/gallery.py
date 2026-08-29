@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import matplotlib
 import numpy as np
+import pyarrow.dataset as ds
 
 from ..periodogram.shards import ShardReader, discover_shards
 from . import adapt, census
@@ -270,9 +271,41 @@ def plot_system(row, block, arrays, out_dir):
     return path
 
 
+def read_samples(population, shard, n_shards, shard_rows):
+    """The stored draws for specific systems of one shard.
+
+    Globs the shard's sample files rather than naming one, because `--n-parts`
+    splits a shard across several -- `samples_shard00001_of_00320_part00_of_03`
+    and so on -- and the per-system table records the shard and the row but not
+    which part they landed in. Naming the unsplit file works only for a run that
+    used `--n-parts 1`, which is not what production does.
+
+    The `shard_row` filter is pushed into the parquet reader, so a row group
+    whose statistics cannot contain a wanted row is never read: one system's
+    block of `TOP_K` draws is ~60 kB, but a whole part file is ~370 MB.
+    """
+    import pandas as pd
+
+    pattern = f"samples_shard{shard:05d}_of_{n_shards:05d}*.parquet"
+    files = sorted(C.samples_dir(population).glob(pattern))
+    if not files:
+        msg = f"no sample files matching {pattern} in {C.samples_dir(population)}"
+        raise FileNotFoundError(msg)
+    table = ds.dataset(files, format="parquet").to_table(
+        filter=ds.field("shard_row").isin([int(r) for r in shard_rows])
+    )
+    if not table.num_rows:
+        msg = (
+            f"{population} shard {shard}: none of rows {sorted(shard_rows)} found "
+            f"across {len(files)} sample file(s) -- are the systems and samples "
+            "from the same run?"
+        )
+        raise ValueError(msg)
+    return pd.DataFrame(table.to_pandas())
+
+
 def make_gallery(population="1_companion", per_bin=None, verbose=True):
     """Draw the gallery, one subdirectory per (SNR, period) cell."""
-    import pandas as pd
 
     _figures._apply_style()
     chosen = select(population, per_bin)
@@ -285,7 +318,7 @@ def make_gallery(population="1_companion", per_bin=None, verbose=True):
     # One reader per shard, not per system: a shard read is the expensive part.
     for shard, group in chosen.groupby("shard"):
         wanted = dict(zip(group["shard_row"], group.index))
-        samples = pd.read_parquet(C.samples_shard(population, int(shard), n_shards))
+        samples = read_samples(population, int(shard), n_shards, list(wanted))
         blocks = {int(r): samples.iloc[i] for i, r in enumerate(samples["shard_row"])}
         with ShardReader(population, int(shard), n_shards) as reader:
             for index, _truth, t, psi, pf, y, yerr in reader.iter_systems():
