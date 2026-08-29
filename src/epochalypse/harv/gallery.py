@@ -118,7 +118,7 @@ def _weighted_scatter(ax, x, y, w, keep):
         alpha=0.35 + 0.65 * rel,
         vmin=min(float(np.min(shade)), -1.0),
         vmax=0.0,
-        cmap="viridis",
+        cmap="magma_r",
         lw=0,
         zorder=2,
     )
