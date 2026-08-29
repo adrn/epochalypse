@@ -401,6 +401,76 @@ def test_min_snr_selection():
     )
 
 
+def test_cost_aware_balance():
+    """LPT must partition, and must beat a stride on a long-tailed cost spread."""
+    from epochalypse import mpi
+
+    rng = np.random.default_rng(0)
+    for n_items, size in ((2880, 1536), (100, 7), (5, 9)):
+        costs = rng.lognormal(0, 0.4, n_items)
+        items = list(range(n_items))
+        shares = [mpi.balance(items, costs, r, size) for r in range(size)]
+        flat = sorted(x for share in shares for x in share)
+        check(
+            f"balance partitions {n_items} items over {size} ranks",
+            flat == items,
+            "every unit assigned exactly once",
+        )
+
+    # the property that matters: a smaller slowest rank, given enough items
+    n_items, size = 5760, 512
+    costs = rng.lognormal(0, 0.4, n_items)
+    items = list(range(n_items))
+    lpt = [
+        sum(costs[i] for i in mpi.balance(items, costs, r, size)) for r in range(size)
+    ]
+    strided = [
+        sum(costs[i] for i in mpi.stride_for_rank(items, r, size)) for r in range(size)
+    ]
+    check(
+        "and beats a stride on the slowest rank, which is what sets walltime",
+        max(lpt) < max(strided),
+        f"used {np.mean(lpt) / max(lpt):.0%} vs {np.mean(strided) / max(strided):.0%} "
+        f"at {n_items / size:.1f} units/rank",
+    )
+    check(
+        "it is deterministic, so ranks agree without communicating",
+        mpi.balance(items, costs, 3, size) == mpi.balance(items, costs, 3, size),
+    )
+
+
+def test_unit_cost_model():
+    """Predicted cost must track the padded epoch count, which is what drives it."""
+    if CATALOG_ROOT is None:
+        print("  [skip] --catalog-root not given")
+        return
+    from epochalypse.periodogram.shards import discover_shards, work_units
+
+    C.set_catalog_root(CATALOG_ROOT)
+    numbers, _ = discover_shards("1_companion")
+    units = [u for u in work_units(["1_companion"], 1) if u[1] == numbers[0]]
+    costs = unit.unit_costs(units)
+    check(
+        "one cost per unit, all positive",
+        len(costs) == len(units) and all(c > 0 for c in costs),
+        f"{len(costs)} unit(s), cost {costs[0]:,.0f}",
+    )
+    # splitting a shard into parts must split its cost, not duplicate it
+    split = unit.unit_costs(
+        [u for u in work_units(["1_companion"], 3) if u[1] == numbers[0]]
+    )
+    check(
+        "parts of a shard sum to the whole shard's cost",
+        np.isclose(sum(split), costs[0], rtol=1e-9),
+        f"3 parts sum to {sum(split):,.0f} vs {costs[0]:,.0f} whole",
+    )
+    check(
+        "--min-snr lowers the predicted cost, because fewer systems are fitted",
+        sum(unit.unit_costs(units, min_snr=5.0)) < costs[0],
+        "the cost model has to know what the run will actually fit",
+    )
+
+
 def test_stride_partitions():
     """A striding bug silently drops or duplicates work, so assert the partition."""
     from epochalypse import mpi

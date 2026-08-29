@@ -154,6 +154,62 @@ def passes_snr(truth, population, min_snr):
     )
 
 
+def unit_costs(units, min_snr=None):
+    """Relative cost of every work unit, planned before any fitting starts.
+
+    Time per system is close to linear in the PADDED epoch count -- that is what
+    `EPOCH_BUCKETS` trades against compile count -- so a unit's cost is the sum
+    of `bucket_for(n_transits)` over the systems it will actually fit. The truth
+    tables already carry `n_transits_dr4`, so this needs no measurement and no
+    trial run.
+
+    Worth the trouble because the spread is large and does not average out:
+    measured 29.5 to 79.1 minutes for units of the same 105 systems, with only
+    ~2 units per rank. Feed the result to `mpi.balance`.
+
+    Returns a list parallel to `units`. Reads one column from each truth table,
+    so call it on one rank and `mpi.broadcast` the result.
+    """
+    import pyarrow.parquet as pq
+
+    from ..periodogram import config as PG
+
+    cache, costs = {}, []
+    for population, shard, n_shards, part, n_parts in units:
+        key = (population, shard)
+        if key not in cache:
+            n = C.POPULATIONS[population]
+            columns = ["n_transits_dr4"] + (
+                [f"snr_total_{k}" for k in range(1, n + 1)] if min_snr and n else []
+            )
+            table = pq.read_table(
+                PG.shard_truths(population, shard, n_shards), columns=columns
+            )
+            transits = np.asarray(table["n_transits_dr4"], dtype=np.int64)
+            keep = np.ones(len(transits), dtype=bool)
+            if min_snr and n:
+                snr = np.column_stack(
+                    [
+                        np.asarray(table[f"snr_total_{k}"], float)
+                        for k in range(1, n + 1)
+                    ]
+                )
+                keep = np.isfinite(snr).all(axis=1) & (snr >= min_snr).all(axis=1)
+            cache[key] = (transits, keep)
+        transits, keep = cache[key]
+
+        # the same [lo, hi) split ShardReader.iter_systems walks, then the cap
+        total = len(transits)
+        lo = part * total // n_parts
+        hi = (part + 1) * total // n_parts
+        rows = np.arange(lo, hi)[keep[lo:hi]]
+        limit = C.limit_per_shard(n_shards * n_parts)
+        if limit:
+            rows = rows[:limit]
+        costs.append(float(sum(C.bucket_for(int(transits[r])) for r in rows)))
+    return costs
+
+
 def run_unit(
     population,
     shard,

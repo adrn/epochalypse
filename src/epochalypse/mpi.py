@@ -73,6 +73,44 @@ def stride_for_rank(items, rank, size):
     return items[rank::size]
 
 
+def balance(items, costs, rank, size):
+    """This rank's share, longest-processing-time-first.
+
+    Sort by cost descending and give each item to the currently least-loaded
+    rank. That is the classic LPT heuristic -- provably within 4/3 of optimal
+    for this problem, and in practice near-perfect once no single item dominates
+    the total.
+
+    Use it instead of `slice_for_rank` or `stride_for_rank` when per-item cost
+    has a long tail AND each rank gets only a few items. Those two differ in
+    whether cost is *correlated* with position; neither reduces the variance of
+    a rank's total, so with ~2 items per rank the slowest rank is set by whoever
+    drew the most expensive one. Measured on the harv stage: contiguous gave 57%
+    of the allocation used, striding 52%, with unit cost spanning 2.7x.
+
+    Deterministic given the same `costs`, so every rank computes the same
+    assignment with no communication -- but the costs themselves have to agree,
+    which is what `broadcast` is for.
+    """
+    import heapq
+
+    order = sorted(range(len(items)), key=lambda i: -costs[i])
+    heap = [(0.0, r) for r in range(size)]
+    heapq.heapify(heap)
+    mine = []
+    for i in order:
+        load, owner = heapq.heappop(heap)
+        if owner == rank:
+            mine.append(items[i])
+        heapq.heappush(heap, (load + float(costs[i]), owner))
+    return mine
+
+
+def broadcast(comm, value, root=0):
+    """`value` from `root` on every rank, or itself without mpi4py."""
+    return comm.bcast(value, root=root) if comm else value
+
+
 def banner(comm, size, n_items, item="sources", **extra):
     """Rank 0's header: fleet size, work per rank, and the threading warning.
 

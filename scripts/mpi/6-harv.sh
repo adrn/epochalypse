@@ -24,6 +24,11 @@ export XLA_FLAGS="--xla_cpu_multi_thread_eigen=false"
 date
 #mpirun python scripts/harv_mpi.py --skip-existing --n-parts 3 \
     #    --catalog-root $OUT_ROOT --output-root $HARV_ROOT
-mpirun python scripts/harv_mpi.py --subsample 10000 --n-parts 3 \
+# --n-parts 6, not 3. Work is assigned cost-first (units are predicted from the
+# truth tables' epoch counts), but that only pays when no single unit costs more
+# than a rank's fair share. At 16 nodes x 96 ranks the measured/simulated
+# allocation used is ~52% at 1.9 units per rank, ~77% at 1.9 with cost-aware
+# assignment, and ~95% at 3.8. Raise it further if you add ranks.
+mpirun python scripts/harv_mpi.py --subsample 10000 --n-parts 6 \
       --catalog-root $OUT_ROOT --output-root $HARV_ROOT
 date

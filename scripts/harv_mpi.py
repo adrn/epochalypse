@@ -44,7 +44,7 @@ from epochalypse import mpi
 from epochalypse.harv import adapt
 from epochalypse.harv import config as C
 from epochalypse.harv import library as L
-from epochalypse.harv.unit import run_unit
+from epochalypse.harv.unit import run_unit, unit_costs
 from epochalypse.periodogram.shards import work_units
 
 
@@ -230,18 +230,46 @@ def main(argv=None):
                 else f"m_max = {C.M_MAX_MJUP:g} MJup, per-system from the host mass"
             ),
             subsample=C.SUBSAMPLE if C.SUBSAMPLE is not None else "the full catalog",
+            balance=(
+                f"{len(units) / max(size, 1):.1f} units/rank"
+                + (
+                    "  <- raise --n-parts; below ~4 the largest single unit caps "
+                    "how balanced the run can be"
+                    if len(units) / max(size, 1) < 3.5
+                    else ""
+                )
+            ),
             min_snr=args.min_snr if args.min_snr is not None else "no cut",
         )
         write_manifest(described, args, size)
         print(f"wrote       : {C.manifest_path().name}\n", flush=True)
 
-    # Strided, not contiguous -- per-unit cost here is linear in the padded epoch
-    # count and unit order is sky order, so contiguous slices hand one rank a
-    # whole patch of expensive sky. See `mpi.stride_for_rank`.
+    # Cost-aware assignment. Unit cost spans ~2.7x because it is linear in the
+    # padded epoch count, and neither a contiguous slice nor a stride reduces
+    # the VARIANCE of a rank's total -- measured, both left ~half the allocation
+    # idle. Rank 0 predicts each unit's cost from the truth tables' epoch counts
+    # and shares the plan; every rank then computes the same longest-first deal.
+    #
+    # This only pays if no single unit costs more than a rank's fair share, so
+    # it wants --n-parts high enough: at 1.9 units per rank it recovers 52% ->
+    # ~77%, at 3.8 it reaches ~95%.
+    costs = None
+    if rank == 0:
+        try:
+            costs = unit_costs(units, min_snr=args.min_snr)
+        except Exception as error:  # noqa: BLE001 - fall back, never fail the run
+            print(
+                f"cost model unavailable ({error!r}); assigning by stride", flush=True
+            )
+    costs = mpi.broadcast(comm, costs)
+    mine = (
+        mpi.balance(units, costs, rank, size)
+        if costs is not None
+        else mpi.stride_for_rank(units, rank, size)
+    )
+
     summaries = []
-    for population, shard, n_shards, part, n_parts in mpi.stride_for_rank(
-        units, rank, size
-    ):
+    for population, shard, n_shards, part, n_parts in mine:
         summaries.append(
             run_unit(
                 population,
