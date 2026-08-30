@@ -59,6 +59,28 @@ SAMPLE_UNITS = {
 }
 
 
+def extensions():
+    """The model extensions, as a tuple for `GaiaAstrometryModel`.
+
+    Only jitter, and only when `config.JITTER_SIGMA_MAS` is set. Empty otherwise,
+    which is the parameterization every measured number in HARV.md was taken
+    under.
+    """
+    if C.JITTER_SIGMA_MAS is None:
+        return ()
+    from harv import Jitter
+
+    return (Jitter(param_unit="mas"),)
+
+
+def sample_units():
+    """`SAMPLE_UNITS` plus whatever the enabled extensions add."""
+    units = dict(SAMPLE_UNITS)
+    if C.JITTER_SIGMA_MAS is not None:
+        units["jitter"] = "mas"
+    return units
+
+
 def parameterization(data=None):
     """The orbital parameterization, optionally floored to one system's data.
 
@@ -136,7 +158,15 @@ def prior(par=None, m_star_msun=None):
     the fingerprint nor the JIT cache.
     """
     par = parameterization() if par is None else par
+    overrides = {}
+    if C.JITTER_SIGMA_MAS is not None:
+        import numpyro.distributions as dist
+
+        # Routed into `extension_priors` by harv's `_apply_overrides`, which
+        # sends any name it does not recognize as nonlinear or linear there.
+        overrides["jitter"] = dist.HalfNormal(C.JITTER_SIGMA_MAS)
     return par.default_prior(
+        **overrides,
         eccentricity=eccentricity_prior(),
         period_min=Q(C.PERIOD_MIN_YR, "yr"),
         period_max=Q(C.PERIOD_MAX_YR, "yr"),
@@ -153,7 +183,8 @@ def model(par=None):
     from harv import GaiaAstrometryModel
 
     return GaiaAstrometryModel(
-        parameterization=parameterization() if par is None else par
+        parameterization=parameterization() if par is None else par,
+        extensions=extensions(),
     )
 
 
@@ -194,7 +225,7 @@ def fingerprint(library):
 def describe(library=None):
     """Everything that defines the library, for the run manifest."""
     described = {
-        "units": SAMPLE_UNITS,
+        "units": sample_units(),
         "n_prior_samples": C.N_PRIOR_SAMPLES,
         "seed": C.SEED,
         "top_k": C.TOP_K,
@@ -206,6 +237,7 @@ def describe(library=None):
         "sigma_pos_mas": C.SIGMA_POS_MAS,
         "sigma_vtan_kms": C.SIGMA_VTAN_KMS,
         "m_max_mjup": C.M_MAX_MJUP,
+        "jitter_sigma_mas": C.JITTER_SIGMA_MAS,  # None -> no jitter extension
         "sigma_a0_au": C.SIGMA_A0_AU,  # None -> derived per system from the host mass
         "p0_yr": C.P0_YR,
         # Not harv's default -- a run's fingerprint changes with it, and a

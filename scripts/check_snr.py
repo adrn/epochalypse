@@ -279,7 +279,10 @@ def main(argv=None):
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--catalog-root", type=Path, required=True)
-    parser.add_argument("--population", default="1_companion")
+    parser.add_argument(
+        "--population",
+        help="default 1_companion for --sample; every population for --ids",
+    )
     parser.add_argument("--ids", type=int, nargs="+", help="specific gaia_source_ids")
     parser.add_argument("--sample", type=int, help="audit this many random systems")
     parser.add_argument("--min-snr", type=float, default=PG.HIGH_SNR_MIN)
@@ -288,18 +291,29 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     PG.set_catalog_root(args.catalog_root)
-    n_companions = int(args.population.split("_")[0])
     rng = np.random.default_rng(args.seed)
-    rows = list(
-        iterate(
-            args.population,
-            n_companions,
-            ids=args.ids,
-            sample=args.sample,
-            min_snr=args.min_snr,
-            rng=rng,
-        )
+    # With explicit ids, search every population: a source id does not say which
+    # one it is in, and "no systems matched" because the default was wrong is a
+    # confusing way to find that out.
+    populations = (
+        list(PG.POPULATIONS)
+        if args.ids and args.population is None
+        else [args.population or "1_companion"]
     )
+    rows = []
+    for population in populations:
+        rows += list(
+            iterate(
+                population,
+                int(population.split("_")[0]),
+                ids=args.ids,
+                sample=args.sample,
+                min_snr=args.min_snr,
+                rng=rng,
+            )
+        )
+        if rows and args.ids and len(rows) == len(args.ids):
+            break
     if not rows:
         raise SystemExit("no systems matched")
 

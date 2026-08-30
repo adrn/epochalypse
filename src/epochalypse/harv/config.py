@@ -202,6 +202,44 @@ ECC_LOC = 0.5
 ECC_SCALE = 0.3
 
 # ==========================================================================
+# Jitter (excess variance)
+# ==========================================================================
+# The generator injects noise at `sigma_UEVA,single` (AL + calibration) and
+# REPORTS `sigma_formal` (attitude + AL, no calibration term). That is
+# deliberate -- equating them would give an artificially self-consistent data
+# set -- but it means every fit weights by an uncertainty smaller than the
+# scatter it is looking at. Measured over 3,000 high-SNR systems of the real
+# catalog: median ratio 1.276, range 0.67 to 11.5.
+#
+# The consequence is not a small bias. Weight is `exp(-dchi2/2)` and chi-square
+# scales as `1/sigma^2`, so under-reported errors sharpen the likelihood
+# contrast between library draws by `r^2 = 1.63` in the exponent. That is a
+# direct contributor to `ess ~ 1` and to the confidently-wrong periods the
+# gallery shows: the sampler is not merely wrong, it is overconfident by
+# construction.
+#
+# `harv.Jitter` adds `jitter^2` in quadrature to the diagonal. Set this to a
+# scale in mas to switch it on; `None` leaves it off.
+#
+# THE COST, AND IT IS NOT SMALL. `Jitter` declares a NONLINEAR parameter, so the
+# shared library goes from three sampled nonlinear dimensions to four. At fixed
+# `N_PRIOR_SAMPLES` the effective resolution per dimension falls from
+# `M^(1/3) ~ 100` to `M^(1/4) ~ 32`, and library size was measured to saturate
+# near 10^6 for three. Adding a dimension is close to dividing the library, so
+# this has to be measured against a matched-M baseline before it goes on by
+# default -- `scripts/benchmarks/sweep_sigma_a0.sh` is the pattern.
+#
+# THE DESIGN TENSION. `sigma_reported` varies star to star across the catalog,
+# but the library is ONE library for every system -- that is what makes 17.2 M
+# posteriors comparable. So the jitter prior here is ABSOLUTE, in mas, and has
+# to be broad enough to cover the whole catalog's noise range, which wastes
+# resolution on every individual star. A per-star jitter prior would fix that
+# and would break the shared library. `sigma_a0` escapes the same tension only
+# because it shapes analytically marginalized priors and is never drawn.
+JITTER_SIGMA_MAS = None
+
+
+# ==========================================================================
 # Epoch padding
 # ==========================================================================
 # harv JITs per epoch count and the catalog spans 44-298, so every distinct
