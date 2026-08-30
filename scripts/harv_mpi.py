@@ -160,6 +160,25 @@ def main(argv=None):
         "are never drawn -- so give each arm its own --output-root",
     )
     parser.add_argument(
+        "--error-mode",
+        choices=("reported", "injected"),
+        default=None,
+        help="'reported' fits with the catalog's own error bars, which are "
+        "SMALLER than the scatter that was injected (median ratio 1.28, tail to "
+        "11) and so make the sampler overconfident by r^2 in the exponent. "
+        "'injected' reconstructs the true scale per epoch and weights by it -- "
+        "correct calibration at no cost in library resolution",
+    )
+    parser.add_argument(
+        "--jitter-sigma",
+        type=float,
+        default=None,
+        help="HalfNormal scale in mas for a LEARNED excess-variance term. Adds a "
+        "fourth sampled nonlinear dimension, so effective resolution per "
+        "dimension falls from M^(1/3) to M^(1/4) -- compare against a matched-M "
+        "baseline before believing any improvement",
+    )
+    parser.add_argument(
         "--min-snr",
         type=float,
         default=None,
@@ -201,6 +220,10 @@ def main(argv=None):
         C.SIGMA_A0_AU = args.sigma_a0
     if args.m_max_mjup is not None:
         C.M_MAX_MJUP = args.m_max_mjup
+    if args.error_mode is not None:
+        C.ERROR_MODE = args.error_mode
+    if args.jitter_sigma is not None:
+        C.JITTER_SIGMA_MAS = args.jitter_sigma
 
     units = work_units(args.populations, args.n_parts)
     if args.max_units:
@@ -228,6 +251,14 @@ def main(argv=None):
                 f"sigma_a0 pinned at {C.SIGMA_A0_AU} AU"
                 if C.SIGMA_A0_AU is not None
                 else f"m_max = {C.M_MAX_MJUP:g} MJup, per-system from the host mass"
+            ),
+            errors=(
+                f"{C.ERROR_MODE}"
+                + (
+                    f", learned jitter ~ HalfNormal({C.JITTER_SIGMA_MAS:g} mas)"
+                    if C.JITTER_SIGMA_MAS is not None
+                    else ", no jitter term"
+                )
             ),
             subsample=C.SUBSAMPLE if C.SUBSAMPLE is not None else "the full catalog",
             balance=(

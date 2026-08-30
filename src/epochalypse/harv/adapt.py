@@ -80,6 +80,27 @@ def pad_arrays(t, psi, pf, y, yerr, n_padded):
     )
 
 
+def injected_errors(yerr, sigma_single_mas):
+    """The uncertainties the noise was actually drawn from.
+
+    The generator injects at `sigma_UEVA,single` and reports `sigma_formal`,
+    applying the SAME per-epoch jitter draw `xi_i` to both. Their ratio is
+    therefore the constant `sigma_UEVA/sigma_formal` at every epoch, and
+    `median(yerr)` estimates `sigma_formal` because `E[1 + 0.1 xi] = 1`. So the
+    injected scale is recoverable exactly, epoch by epoch, from what the shard
+    already stores.
+
+    Returns `yerr` unchanged when the mode is "reported" or no scale is given.
+    """
+    if C.ERROR_MODE != "injected" or sigma_single_mas is None:
+        return yerr
+    yerr = np.asarray(yerr, dtype=np.float64)
+    reported = float(np.median(yerr))
+    if not np.isfinite(reported) or reported <= 0:
+        return yerr
+    return yerr * (float(sigma_single_mas) / reported)
+
+
 def to_harv(t, psi, pf, y, yerr, *, pad=True):
     """One system's epochs as a harv `GaiaAstrometryData`.
 
@@ -107,15 +128,21 @@ def to_harv(t, psi, pf, y, yerr, *, pad=True):
     )
 
 
-def prepare(t, psi, pf, y, yerr):
+def prepare(t, psi, pf, y, yerr, sigma_single_mas=None):
     """One system as `(data, parameterization, n_epochs)`.
 
     The data is padded to its bucket; the parameterization is built from the
     unpadded data, for the reason in the module docstring. Building the data
     twice costs microseconds against a ~2.5 s fit.
+
+    `sigma_single_mas` switches the uncertainties to the injected scale under
+    `config.ERROR_MODE = "injected"`. It is applied BEFORE the parameterization
+    is built, so `a_floor = med(sigma)/sqrt(N)` reflects the precision the data
+    actually have rather than the precision they claim.
     """
     from .library import parameterization
 
+    yerr = injected_errors(yerr, sigma_single_mas)
     return (
         to_harv(t, psi, pf, y, yerr, pad=True),
         parameterization(to_harv(t, psi, pf, y, yerr, pad=False)),

@@ -55,6 +55,7 @@ def fit_system(
     seed,
     prior=None,
     m_star_msun=None,
+    sigma_single_mas=None,
     top_k=None,
 ):
     """Fit one system. Returns `(record_without_ids, {param: (top_k,) array})`.
@@ -72,7 +73,7 @@ def fit_system(
     from harv import RejectionSampler
 
     top_k = C.TOP_K if top_k is None else int(top_k)
-    data, par, n_epochs = adapt.prepare(t, psi, pf, y, yerr)
+    data, par, n_epochs = adapt.prepare(t, psi, pf, y, yerr, sigma_single_mas)
     n_padded = len(data.time)
 
     if prior is None:
@@ -370,6 +371,7 @@ def run_unit(
                         prior_samples=prior_samples,
                         seed=system_seed(C.SEED, population, gaia_source_id),
                         m_star_msun=truth["mass_st_msun"],
+                        sigma_single_mas=truth["sigma_single_mas"],
                         top_k=top_k,
                     )
                 except Exception as error:

@@ -218,6 +218,27 @@ ECC_SCALE = 0.3
 # gallery shows: the sampler is not merely wrong, it is overconfident by
 # construction.
 #
+# There are three defensible responses, and they answer different questions.
+#
+#   ERROR_MODE = "reported"  (c) status quo: fit with the errors the catalog
+#       reports. Overconfident by r^2 in the exponent. The baseline every
+#       measured number in HARV.md was taken under.
+#   ERROR_MODE = "injected"  (b) fit with the errors that were actually
+#       injected, reconstructed per epoch as `yerr * sigma_single / median(yerr)`
+#       -- exact, because the generator applies the SAME jitter draw xi_i to
+#       both scales, so their ratio is the constant sigma_UEVA/sigma_formal.
+#       Correct calibration for free: no extra dimension, no lost resolution.
+#       Defensible for real data too, since DR3 publishes an excess-noise
+#       estimate that does not depend on the orbit.
+#   JITTER_SIGMA_MAS = <mas>  (a) learn the excess variance. The honest test of
+#       whether a downstream analyst who does NOT know the calibration term can
+#       still recover orbits. Costs a nonlinear dimension; see below.
+#
+# (a) and (b) are independent switches and can be combined -- learning jitter on
+# correctly-weighted data should return jitter ~ 0, which is itself a useful
+# check that the sampler is not inventing excess variance to excuse a coarse
+# library.
+#
 # `harv.Jitter` adds `jitter^2` in quadrature to the diagonal. Set this to a
 # scale in mas to switch it on; `None` leaves it off.
 #
@@ -237,6 +258,10 @@ ECC_SCALE = 0.3
 # and would break the shared library. `sigma_a0` escapes the same tension only
 # because it shapes analytically marginalized priors and is never drawn.
 JITTER_SIGMA_MAS = None
+
+# "reported" (the catalog's own error bars) or "injected" (the scale the noise
+# was actually drawn from). See above.
+ERROR_MODE = "reported"
 
 
 # ==========================================================================
