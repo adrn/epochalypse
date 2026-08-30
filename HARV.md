@@ -490,6 +490,39 @@ column. Grey points are **prior draws, not bad fits**: `TOP_K` keeps 1,024 by
 `GALLERY_WEIGHT_MASS` is drawn small and pale, and the count is in the legend.
 See "Reading the weights" below for why this is not cosmetic.
 
+### Asking questions of a finished run
+
+`scripts/diagnostics/` is read-only and separate from the pipeline — see
+`scripts/README.md` for the full layout.
+
+```bash
+# is snr_total the signal that is actually in the data?
+python scripts/diagnostics/check_snr.py --catalog-root $OUT_ROOT --sample 3000
+python scripts/diagnostics/check_snr.py --catalog-root $OUT_ROOT --ids <source_id>
+
+# is snr_eff's absorption penalty the right size?  (needs no catalog)
+python scripts/diagnostics/check_snr.py --calibrate
+
+# for one system: could the data ever have told these two periods apart?
+python scripts/diagnostics/inspect_system.py <source_id> \
+    --catalog-root $OUT_ROOT --output-root $HARV_ROOT
+```
+
+**`snr_eff` is a heuristic and `--calibrate` measures its bias.**
+`snr_eff = snr_single / (1 + (P/T)²)` is right in its *period scaling* — it
+agrees with the exact projection to 10–30% across 0.2 ≤ P/T ≤ 10 — but it is
+optimistic by **1.8× at short period**, because it omits the along-scan
+projection: a 2-D orbit of semi-axis α, averaged over orientation and a rotating
+scan direction, delivers well under α of along-scan rms. That bias is
+period-independent and applies to the whole catalog, so `HIGH_SNR_MIN = 5`
+selects at an effective ~3.
+
+It also carries **no eccentricity term**, and the 16–84% spread of the true
+retained fraction widens from 1.9× at e = 0 to 6.4× at e = 0.8. No function of
+(P, a) can describe an individual system, because the variable that dominates at
+long period is where periastron falls relative to the observing window. The fix
+is an exact per-system projection, not a better formula.
+
 ### Reading the weights
 
 There is **no `weight` column** in the samples parquet. Rebuild it from what is

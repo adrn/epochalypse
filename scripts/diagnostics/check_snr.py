@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Is `snr_total` the signal that is actually in the along-scan data?
 
-    python scripts/check_snr.py --catalog-root $OUT_ROOT --ids 568042036585081856
-    python scripts/check_snr.py --catalog-root $OUT_ROOT --sample 2000
+    python scripts/diagnostics/check_snr.py --catalog-root $OUT_ROOT --ids 568042036585081856
+    python scripts/diagnostics/check_snr.py --catalog-root $OUT_ROOT --sample 2000
+    python scripts/diagnostics/check_snr.py --calibrate    # needs no catalog
 
 Over the epoch shards: two least-squares solves and one projection per system.
 No prior library and no posterior sampling, so thousands of systems in a minute.
@@ -327,6 +328,17 @@ def main(argv=None):
         help="verify the reconstruction against the generator; needs no catalog",
     )
     parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="measure snr_eff's absorption penalty against the exact geometry, "
+        "over a grid in P/T and eccentricity; needs no catalog",
+    )
+    parser.add_argument("--n-trials", type=int, default=60)
+    parser.add_argument("--n-epochs", type=int, default=100)
+    parser.add_argument(
+        "--ecc-at-ratio", type=float, default=2.0, help="P/T for the ecc scan"
+    )
+    parser.add_argument(
         "--population",
         help="default 1_companion for --sample; every population for --ids",
     )
@@ -339,8 +351,10 @@ def main(argv=None):
 
     if args.self_test:
         return self_test()
+    if args.calibrate:
+        return calibrate(args)
     if args.catalog_root is None:
-        parser.error("--catalog-root is required unless --self-test")
+        parser.error("--catalog-root is required unless --self-test/--calibrate")
     PG.set_catalog_root(args.catalog_root)
     rng = np.random.default_rng(args.seed)
     # With explicit ids, search every population: a source id does not say which
@@ -529,6 +543,118 @@ def save_figure(frame, args):
     fig.savefig(path, bbox_inches="tight", dpi=140)
     plt.close(fig)
     print(f"\n  wrote {path}")
+
+
+def calibrate(args):
+    """Is `snr_eff`'s absorption penalty the right size? Measure it.
+
+    `planets.draw_companions` records
+    `snr_eff = snr_single / (1 + (sma/a_crit)^3)` with
+    `a_crit = (T^2 M)^(1/3)`, so `(sma/a_crit)^3` is exactly `(P/T)^2` and the
+    penalty is `1 + (P/T)^2`. That is a HEURISTIC, and it has never been checked
+    against the geometry it is standing in for.
+
+    So build orbits with the generator itself across a grid in `P/T` and
+    eccentricity, project each one's reflex onto the orthogonal complement of
+    the astrometric basis, and compare what survives against what the formula
+    claims. Everything is measured against `alpha` -- the same reference
+    `snr_single` divides by -- because comparing a retention fraction defined
+    against the reflex rms with a penalty defined against `alpha` is how this
+    analysis went wrong the first time.
+
+    Needs no catalog: the answer is a property of the scan geometry and the
+    formula, not of any particular star.
+    """
+    from epochalypse import constants as k
+    from epochalypse.astrometry import simulate_along_scan
+
+    T = k.DR4_BASELINE_YEARS
+    rng = np.random.default_rng(args.seed)
+    n, mstar, plx, mpl = args.n_epochs, 0.5, 20.0, 10.0
+    mp = mpl * k.MJUP_IN_MSUN
+    print(
+        f"snr_eff = snr_single / (1 + (P/T)^2), T = {T} yr.\n"
+        f"'geometry' is rms(reflex orthogonal to the astrometric basis) / alpha,\n"
+        f"the largest per-epoch signal any fit could use. {args.n_trials} random\n"
+        "orientations and phases per cell, {n} epochs.\n".format(n=n)
+    )
+
+    def cell(period, ecc):
+        sma = (mstar * period**2) ** (1 / 3)
+        alpha = mp / (mstar + mp) * sma * plx  # planets.py's own definition
+        out = []
+        for _ in range(args.n_trials):
+            t = np.sort(rng.uniform(-T / 2, T / 2, n))
+            psi = rng.uniform(0, 2 * np.pi, n)
+            pf = np.sin(2 * np.pi * t)
+            yerr = np.full(n, 0.05)
+            companion = {
+                "mass_pl": mpl,
+                "period": period,
+                "ecc": ecc,
+                "inc": float(np.degrees(np.arccos(rng.uniform(-1, 1)))),
+                "omega": float(rng.uniform(0, 360)),
+                "Omega": float(rng.uniform(0, 360)),
+                "M_anom": float(rng.uniform(0, 360)),
+            }
+            shared = dict(
+                mstar=mstar,
+                rstar=0.5,
+                parallax=plx,
+                mu_alpha=25.0,
+                mu_delta=-10.0,
+                parallax_factor=pf,
+                sigma_ueva=0.0,
+                seed=0,
+            )
+            _, with_orbit = simulate_along_scan(t, psi, [companion], **shared)
+            _, without = simulate_along_scan(t, psi, [], **shared)
+            reflex = np.asarray(with_orbit) - np.asarray(without)
+            _, left = retained_fraction(reflex, t, psi, pf, yerr)
+            out.append(left * 0.05 / alpha)
+        return np.percentile(out, [16, 50, 84])
+
+    print("=== against period, at e = 0.2 ===")
+    print(
+        f"  {'P/T':>6} {'formula':>9} {'geometry':>9} {'formula/geo':>12}"
+        f" {'16-84%':>19}"
+    )
+    ratios = [0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
+    for ratio in ratios:
+        lo, mid, hi = cell(ratio * T, 0.2)
+        formula = 1.0 / (1.0 + ratio**2)
+        print(
+            f"  {ratio:6.1f} {formula:9.4f} {mid:9.4f} {formula / max(mid, 1e-12):12.2f}"
+            f"  {lo:8.4f} - {hi:.4f}"
+        )
+    print(
+        "\n  A ratio near 1 means the P/T scaling is right. The value at SHORT"
+        "\n  period is the projection factor the formula omits entirely: a 2-D"
+        "\n  orbit of semi-axis alpha, averaged over orientation and a rotating"
+        "\n  scan direction, delivers well under alpha of along-scan rms."
+    )
+
+    print(f"\n=== against eccentricity, at P/T = {args.ecc_at_ratio:g} ===")
+    print(
+        f"  {'ecc':>6} {'formula':>9} {'geometry':>9} {'formula/geo':>12}"
+        f" {'16-84%':>19} {'spread':>8}"
+    )
+    formula = 1.0 / (1.0 + args.ecc_at_ratio**2)
+    for ecc in (0.0, 0.3, 0.6, 0.8, 0.9, 0.95):
+        lo, mid, hi = cell(args.ecc_at_ratio * T, ecc)
+        print(
+            f"  {ecc:6.2f} {formula:9.4f} {mid:9.4f} {formula / max(mid, 1e-12):12.2f}"
+            f"  {lo:8.4f} - {hi:.4f} {hi / max(lo, 1e-12):8.1f}x"
+        )
+    print(
+        "\n  snr_eff has NO eccentricity term. Watch the SPREAD column rather than"
+        "\n  the median: if it widens with e, then no function of (P, a) can"
+        "\n  describe an individual system, because the variable that dominates is"
+        "\n  where periastron falls relative to the observing window -- which the"
+        "\n  formula cannot see. The fix is then not a better heuristic but an"
+        "\n  exact per-system projection."
+    )
+    return 0
 
 
 def self_test():

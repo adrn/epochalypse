@@ -90,7 +90,7 @@ if [[ $WHICH == sweep ]]; then
         print "submit them with: zsh $0 sigma-a0"
         exit 0
     fi
-    python scripts/benchmarks/sweep_summary.py $roots
+    python scripts/benchmarks/compare_runs.py --roots $roots
     exit 0
 fi
 

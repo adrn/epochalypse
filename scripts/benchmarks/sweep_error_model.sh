@@ -17,7 +17,7 @@
 #   sbatch -J err-jitter   scripts/benchmarks/sweep_error_model.sh reported 0.05
 #   sbatch -J err-both     scripts/benchmarks/sweep_error_model.sh injected 0.05
 #
-#   python scripts/compare_runs.py --roots $HARV_ROOT-err-* --figure <png>
+#   python scripts/benchmarks/compare_runs.py --roots $HARV_ROOT-err-* --figure <png>
 #
 # Arguments:
 #   $1  error mode: "reported" or "injected"   (required)

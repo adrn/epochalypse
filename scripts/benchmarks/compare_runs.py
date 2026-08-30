@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Put several harv runs side by side, so an arm can be judged against a baseline.
 
-    python scripts/compare_runs.py \
+    python scripts/benchmarks/compare_runs.py \
         --roots $HARV_ROOT-reported $HARV_ROOT-injected $HARV_ROOT-jitter \
         --labels reported injected jitter \
         --figure $HARV_ROOT-compare/compare.png
@@ -23,10 +23,21 @@ one table and one figure per question:
 
 **The settings table is the one to read first.** An arm that differs in
 `n_prior_samples` as well as in the thing being tested is not a comparison, and
-this is where that shows up. `sweep_summary.py` learned the same lesson for the
-sigma_a0 sweep; the difference here is that these arms differ in the LIKELIHOOD
-(the weights on the data) rather than only in the prior, so their `logZ_int`
-values are not comparable across arms even when everything else matches.
+this is where that shows up.
+
+**Read the rows against each other, never against the production run.** A sweep
+runs at a smaller library size to stay cheap, which lowers recovery across every
+arm; only the relative comparison at fixed M is meaningful, which is why a sweep
+must always include the current setting as a control arm.
+
+**`logZ_int` is not comparable across arms that changed the error model.** The
+sigma_a0 arms differ only in the prior, so their evidences can be read against
+each other. The error-model arms differ in the LIKELIHOOD -- the weights on the
+data -- so theirs cannot, no matter how well everything else matches. Compare
+them on recovery and rail fraction instead.
+
+Every definition comes from `epochalypse.harv.census`, the same one the census
+and the figures use, so this cannot drift from what they report.
 """
 
 from __future__ import annotations

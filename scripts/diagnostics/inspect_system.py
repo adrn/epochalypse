@@ -1,42 +1,40 @@
 #!/usr/bin/env python
 """Dissect one system: why did its period land where it did?
 
-    python scripts/harv_inspect.py 155720052270716800 1148009440706631808 \
-        --catalog-root $OUT_ROOT --output-root $HARV_ROOT
+    python scripts/diagnostics/inspect_system.py 155720052270716800 \
+        --catalog-root $OUT_ROOT --output-root $HARV_ROOT --figure $HARV_ROOT/figures
 
-The gallery shows you *that* a fit went somewhere unexpected. This says *why*,
-by separating the three explanations that a single posterior cannot:
+The gallery shows you *that* a fit went somewhere unexpected. This says whether
+the data could ever have told the difference, which a single posterior cannot.
 
-  1. THE DATA CANNOT TELL.  The profile chi-square is flat between the true
-     period and the reported one, so both fit equally well and which one was
-     reported is a coin flip the library made. Near one cycle across the
-     mission span this is the default expectation, not a surprise: position and
-     proper motion are free linear parameters, so a slow orbit is partly
-     absorbable into them and the period ridge goes shallow.
-  2. THE LIBRARY MISSED IT.  The data prefer the truth, but at
-     N_PRIOR_SAMPLES over four decades x eccentricity x phase the effective
-     grid is ~100 per nonlinear dimension, and nothing landed close enough.
-     Refitting at 10x the library moves the answer.
-  3. THE LIKELIHOOD REALLY PREFERS THE WRONG PERIOD.  The restricted-prior
-     Bayes factor favours the reported period by many nats. Then no library
-     size helps and the model or the noise is the story.
+PROFILE CHI-SQUARE against trial period: all nine linear parameters refit at
+every grid point, minimized over eccentricity and phase. The likelihood alone --
+no priors, no Occam penalty -- so it says what the data can and cannot
+distinguish, and `delta chi2` between the truth and the reported period is the
+headline number.
 
-Three tests, in that order:
+  |delta chi2| small   the data cannot tell them apart. Which period was
+                       reported is then a coin flip the library made, not a
+                       bias -- expect it to land either side of the truth
+                       across systems. Near one cycle across the mission span
+                       this is the DEFAULT expectation: position and proper
+                       motion are free, so a slow orbit is partly absorbable
+                       into them and the period ridge goes shallow.
+  truth fits better    the library never sampled close enough. Resolution, not
+                       physics: rerun `harv_mpi.py --n-prior-samples` higher.
+  reported fits better the likelihood really does prefer it. No library size
+                       helps; look at the model or the noise.
 
-  profile   chi-square against trial period, refitting all nine linear
-            parameters at each and minimizing over eccentricity and phase. This
-            is the LIKELIHOOD alone -- no priors, no Occam penalty -- so it says
-            what the data can and cannot distinguish. Delta chi-square between
-            the truth and the reported period is the headline number.
-  bayes     logZ_int over a narrow period window centred on the truth, against
-            the same-width window centred on the reported period. Equal prior
-            volume, so the difference IS the log Bayes factor, and unlike the
-            profile it includes the marginalization penalty harv actually pays.
-  refit     the same system at larger N_PRIOR_SAMPLES. If the answer moves to
-            the truth, it was resolution.
+It also reports the period range within `delta chi2 < 1`, which is the honest
+period uncertainty -- and is routinely orders of magnitude wider than the
+`period_wstd_yr` the run reports, because at `ess ~ 1` that spread is a property
+of the library rather than of the data.
 
-`--dump` writes the epochs and the stored draws to one npz, for looking at
-somewhere else.
+For a two-companion system it fits BOTH injected orbits at once. harv fits a
+single Keplerian, so a one-orbit fit to a two-orbit wobble lands on an inflated
+amplitude at a period that is neither and spills the rest into parallax and
+proper motion. If the two-orbit chi-square is much better, that is the
+limitation and no library size touches it.
 """
 
 from __future__ import annotations
@@ -48,12 +46,10 @@ from pathlib import Path
 import numpy as np
 
 from epochalypse import constants as k
-from epochalypse.harv import adapt, census, gallery, unit
+from epochalypse.harv import adapt, census, gallery
 from epochalypse.harv import config as C
 from epochalypse.harv import library as L
 from epochalypse.periodogram.shards import ShardReader, discover_shards
-
-TESTS = ("profile", "bayes", "refit")
 
 
 def locate(gaia_source_id, populations=None):
@@ -177,31 +173,6 @@ def within(periods, chi2, threshold):
     return periods[lo], periods[hi]
 
 
-def restricted_logz(arrays, m_star_msun, centre, half_dex, n_samples, seed, top_k):
-    """`logZ_int` with the period prior confined to a window around `centre`.
-
-    Two windows of the same width in log-period have the same prior volume, so
-    the difference between their `logZ_int` is exactly the log Bayes factor
-    between "the period is near here" and "the period is near there" -- with
-    every other prior, the padding correction and the marginalization penalty
-    identical on both sides.
-    """
-    saved = (C.PERIOD_MIN_YR, C.PERIOD_MAX_YR)
-    try:
-        C.PERIOD_MIN_YR = float(centre) * 10.0**-half_dex
-        C.PERIOD_MAX_YR = float(centre) * 10.0**half_dex
-        library = L.draw(n_samples)
-        return unit.fit_system(
-            *arrays,
-            prior_samples=library,
-            seed=seed,
-            m_star_msun=m_star_msun,
-            top_k=top_k,
-        )
-    finally:
-        C.PERIOD_MIN_YR, C.PERIOD_MAX_YR = saved
-
-
 def inspect(gaia_source_id, args):
     population, shard, shard_row = locate(gaia_source_id, args.populations)
     truth, arrays = read_one(population, shard, shard_row)
@@ -290,48 +261,28 @@ def inspect(gaia_source_id, args):
         ]
     )
 
-    if "profile" in args.tests:
-        run_profile(
-            model, data, p_true, p_best, chi2_null, n_real, args, gaia_source_id
-        )
-        if n_comp > 1:
-            best, a0s = two_orbit_chi2(model, data, truth, n_comp, args.n_phase)
-            print(f"\n--- both injected orbits in the model ({n_comp} companions) ---")
-            print(
-                f"  chi2 with both orbits   {best:10.2f}  ({best / n_real:.3f} per epoch)"
-            )
-            for j, a0 in enumerate(a0s, start=1):
-                print(
-                    f"    orbit {j}: fitted a0 = {a0:.4f} mas   "
-                    f"injected alpha = {float(truth[f'alpha_mas_{j}']):.4f} mas   "
-                    f"P = {float(truth[f'period_{j}']):.4f} yr"
-                )
-            print(
-                "  harv fits ONE Keplerian. If this is much better than the best"
-                "\n  single-orbit chi2 above, the model is the limitation: a one-orbit"
-                "\n  fit to a two-orbit wobble lands on an inflated amplitude at a"
-                "\n  period that is neither, and spills the rest into parallax and"
-                "\n  proper motion. No library size fixes that."
-            )
-    if "bayes" in args.tests:
-        run_bayes(arrays, truth, p_true, p_best, args)
-    if "refit" in args.tests:
-        run_refit(arrays, truth, p_true, p_best, args)
+    run_profile(model, data, p_true, p_best, chi2_null, n_real, args, gaia_source_id)
 
-    if args.dump:
-        path = Path(args.dump) / f"harv_system_{gaia_source_id}.npz"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            path,
-            t=arrays[0],
-            psi=arrays[1],
-            pf=arrays[2],
-            y=arrays[3],
-            yerr=arrays[4],
-            truth=np.array([(key, str(value)) for key, value in truth.items()]),
-            **{name: np.asarray(block[name], float) for name in L.SAMPLE_UNITS},
+    if n_comp > 1:
+        # harv fits ONE Keplerian. Give the truth the model it deserves and see
+        # how much of the gap that closes.
+        best, a0s = two_orbit_chi2(model, data, truth, n_comp, args.n_phase)
+        print(f"\n--- both injected orbits in the model ({n_comp} companions) ---")
+        print(
+            f"  chi2 with both orbits   {best:10.2f}  ({best / n_real:.3f} per epoch)"
         )
-        print(f"\n  dumped -> {path}  ({path.stat().st_size / 1e3:.0f} kB)")
+        for j, a0 in enumerate(a0s, start=1):
+            print(
+                f"    orbit {j}: fitted a0 = {a0:.4f} mas   "
+                f"injected alpha = {float(truth[f'alpha_mas_{j}']):.4f} mas   "
+                f"P = {float(truth[f'period_{j}']):.4f} yr"
+            )
+        print(
+            "  Much better than the best single-orbit chi2 above means the MODEL is"
+            "\n  the limitation: a one-orbit fit to a two-orbit wobble lands on an"
+            "\n  inflated amplitude at a period that is neither, and spills the rest"
+            "\n  into parallax and proper motion. No library size fixes that."
+        )
 
 
 def n_padded_of(row):
@@ -399,8 +350,14 @@ def run_profile(model, data, p_true, p_best, chi2_null, n_real, args, gaia_sourc
 
     print("\n  P [yr]     delta chi2 vs best    a0 [mas]   e")
     show = np.logspace(np.log10(C.PERIOD_MIN_YR), np.log10(C.PERIOD_MAX_YR), 40)
+    # dedupe: a coarse --n-period makes several display rows land on one grid
+    # point, which reads as a repeated line rather than as a coarse grid
+    seen = set()
     for period in show:
         i = int(np.argmin(np.abs(grid - period)))
+        if i in seen:
+            continue
+        seen.add(i)
         bar = "#" * int(
             min(40, max(0, (chi2[i] - floor) / max(chi2_null - floor, 1) * 40))
         )
@@ -456,71 +413,6 @@ def save_profile(grid, chi2, a0, p_true, p_best, chi2_null, gaia_source_id, args
     print(f"  wrote {path}")
 
 
-def run_bayes(arrays, truth, p_true, p_best, args):
-    """The same question harv answers, restricted to one period window at a time."""
-    print(f"\n--- restricted-prior Bayes factor (+/- {args.half_dex} dex windows) ---")
-    out = {}
-    for label, centre in (("P_true", p_true), ("P_reported", p_best)):
-        record, _ = restricted_logz(
-            arrays,
-            truth["mass_st_msun"],
-            centre,
-            args.half_dex,
-            args.n_window_samples,
-            args.seed,
-            args.top_k,
-        )
-        out[label] = record
-        print(
-            f"  {label:<12} centred {centre:8.4f} yr   logZ_int {record['logZ_int']:12.3f}"
-            f"   ess {record['ess']:7.2f}   P_best {record['period_best_yr']:.4f}"
-        )
-    delta = out["P_true"]["logZ_int"] - out["P_reported"]["logZ_int"]
-    print(f"\n  ln B (true vs reported) = {delta:+.2f} nats")
-    if abs(delta) < 2.3:
-        print(
-            "  -> inconclusive (|ln B| < 2.3, i.e. within 10:1). The evidence does not"
-            "\n     separate them, which is the same verdict as a flat profile."
-        )
-    elif delta > 0:
-        print(
-            "  -> the evidence FAVOURS the true period. The full-range run missed it"
-            "\n     because it never drew close enough -- a resolution problem."
-        )
-    else:
-        print(
-            "  -> the evidence favours the reported period even with the prior confined"
-            "\n     around the truth. That is a real preference, not a sampling miss."
-        )
-
-
-def run_refit(arrays, truth, p_true, p_best, args):
-    """Does more library move the answer? The direct test of resolution."""
-    print("\n--- refit at larger N_PRIOR_SAMPLES ---")
-    print(
-        f"  {'M':>12}  {'P_best':>10}  {'ess':>8}  {'wcap':>7}  {'|ln P/P_true|':>13}"
-    )
-    for n_samples in args.library_sizes:
-        started = time.time()
-        record, _ = unit.fit_system(
-            *arrays,
-            prior_samples=L.draw(int(n_samples)),
-            seed=args.seed,
-            m_star_msun=truth["mass_st_msun"],
-            top_k=args.top_k,
-        )
-        offset = abs(np.log(record["period_best_yr"] / p_true))
-        print(
-            f"  {int(n_samples):>12,}  {record['period_best_yr']:>10.4f}  "
-            f"{record['ess']:>8.2f}  {record['weight_captured']:>7.4f}  "
-            f"{offset:>13.4f}   ({time.time() - started:.0f} s)"
-        )
-    print(
-        f"  reference: reported {p_best:.4f}, injected {p_true:.4f}, "
-        f"|ln| = {abs(np.log(p_best / p_true)):.4f}"
-    )
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -529,27 +421,11 @@ def main(argv=None):
     parser.add_argument("--catalog-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--populations", nargs="+", choices=list(C.POPULATIONS))
-    parser.add_argument("--tests", nargs="+", choices=TESTS, default=list(TESTS))
     parser.add_argument("--n-period", type=int, default=90)
     parser.add_argument("--n-ecc", type=int, default=6)
     parser.add_argument("--n-phase", type=int, default=24)
-    parser.add_argument(
-        "--half-dex", type=float, default=0.02, help="Bayes window half-width"
-    )
-    parser.add_argument("--n-window-samples", type=int, default=200_000)
-    parser.add_argument(
-        "--library-sizes",
-        type=float,
-        nargs="+",
-        default=[1e6, 1e7],
-        help="library sizes for the refit test",
-    )
-    parser.add_argument("--top-k", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=C.SEED)
     parser.add_argument("--figure", type=Path, help="directory for the profile PNG")
-    parser.add_argument(
-        "--dump", type=Path, help="directory for an npz of the raw data"
-    )
     args = parser.parse_args(argv)
 
     C.set_catalog_root(args.catalog_root)

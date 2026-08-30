@@ -15,7 +15,7 @@
 #
 #   sbatch -J sweep-a0-0.01 scripts/benchmarks/sweep_sigma_a0.sh 0.01
 #   zsh scripts/benchmarks/submit_all.sh sigma-a0      # submits every arm
-#   python scripts/benchmarks/sweep_summary.py <roots> # compares them
+#   python scripts/benchmarks/compare_runs.py --roots <roots>  # compares them
 #
 # Arguments (all optional after the first):
 #   $1  sigma_a0 in AU at P0            (required)
@@ -133,7 +133,7 @@ mpirun python scripts/harv_mpi.py --sigma-a0 $SIGMA_A0 --subsample $SUBSAMPLE \
 date
 
 # Each arm carries its own diagnostic, so a log is self-contained even before
-# sweep_summary.py puts the arms side by side.
+# compare_runs.py puts the arms side by side.
 python scripts/harv_finish.py --output-root $ROOT --populations 1_companion \
     --stages census recovery
 date
