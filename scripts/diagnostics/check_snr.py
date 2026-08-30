@@ -169,12 +169,13 @@ def retained_fraction(reflex, t, psi, pf, yerr):
     )
 
 
-def audit(truth, arrays, n_companions):
+def audit(truth, arrays, n_companions, population="?"):
     """Everything measurable about one system's signal, and what was claimed."""
     t, psi, pf, y, yerr = arrays
     n = len(t)
     row = {
         "gaia_source_id": int(truth["gaia_source_id"]),
+        "population": population,
         "n_epochs": n,
         "span_yr": float(t.max() - t.min()),
         "sigma_reported": float(np.median(yerr)),
@@ -221,34 +222,52 @@ def audit(truth, arrays, n_companions):
         )
         theta, *_ = np.linalg.lstsq(stacked, y / yerr, rcond=None)
         row["amp_injected"] = float(theta[-1])
+        # ...and its uncertainty, which is the whole point. A heavily absorbed
+        # orbit constrains its own amplitude weakly, so amp scatters widely
+        # around 1 with no bug in sight: at a detectable SNR of 4, sigma_amp is
+        # 0.25 and a quarter of systems land outside [0.5, 1.5] by luck. Judging
+        # amp against a fixed window instead of against sigma_amp is what turned
+        # ordinary noise into eighty lines of "GENERATOR BUG".
+        covariance = np.linalg.pinv(stacked.T @ stacked)
+        row["amp_err"] = float(
+            np.sqrt(max(covariance[-1, -1], 0.0)) * row["sigma_ratio"]
+        )
+        row["amp_pull"] = (
+            (row["amp_injected"] - 1.0) / row["amp_err"] if row["amp_err"] > 0 else 0.0
+        )
         row["retained"], left_rms = retained_fraction(reflex, t, psi, pf, yerr)
         # in units of the INJECTED noise, which is what snr_total divides by
         row["snr_detectable"] = (
             np.sqrt(n) * left_rms * row["sigma_reported"] / row["sigma_single"]
         )
-        row["chi2_predicted"] = floor * (1.0 + left_rms**2)
+        # chi-square adds in quadrature with the floor, it does not scale it:
+        # E[chi2/dof] = r^2 + (A/sigma_reported)^2, and left_rms is already in
+        # units of the reported error.
+        row["chi2_predicted"] = floor + left_rms**2
     return row
 
 
 def verdict(row):
-    """Which of the three explanations this system's numbers support.
+    """Which explanation this system's numbers support -- as a CATEGORY.
 
-    Keyed on `amp_injected` -- the fitted amplitude of the exact known injected
-    reflex -- because that is a measurement rather than a heuristic. Everything
-    else here is context for it.
+    Keyed on `amp_pull`, the deviation of the fitted injected-signal amplitude
+    from 1 in units of its own uncertainty. A fixed window on `amp` instead
+    counts every weakly-constrained amplitude as a defect, which over 3,000
+    systems produces a page of one-off "bugs" that are all just noise.
     """
     if "snr_total" not in row:
         return "control (no companion)"
-    amp = row["amp_injected"]
-    if not 0.5 < amp < 1.5:
-        return f"GENERATOR BUG -- injected signal fits at amplitude {amp:.2f}, not 1"
+    if abs(row["amp_pull"]) > 5.0:
+        return "SUSPECT -- injected signal does not fit at amplitude 1"
     if row["retained"] < 0.25:
-        return "ABSORBED by the 5-param fit (snr_eff penalty too weak)"
+        return "absorbed by the 5-param fit (snr_eff penalty too weak)"
     return "consistent -- snr_total is in the data"
 
 
 def report_one(row):
-    print(f"\n{'=' * 72}\ngaia {row['gaia_source_id']}\n{'=' * 72}")
+    print(
+        f"\n{'=' * 72}\ngaia {row['gaia_source_id']}   ({row['population']})\n{'=' * 72}"
+    )
     print(f"  epochs              {row['n_epochs']} over {row['span_yr']:.2f} yr")
     print(f"  parallax            {row['parallax_mas']:.3f} mas")
     print(
@@ -280,8 +299,10 @@ def report_one(row):
         )
         print(
             f"\n  FITTED AMPLITUDE of the known injected signal: "
-            f"{row['amp_injected']:.3f}"
-            "\n  (1.0 = the data carry exactly the orbit the truth table claims)"
+            f"{row['amp_injected']:.3f} +/- {row['amp_err']:.3f}"
+            f"  ({row['amp_pull']:+.1f} sigma from 1)"
+            "\n  (1.0 = the data carry exactly the orbit the truth table claims;"
+            "\n   a weakly-retained orbit constrains this weakly, so read the sigma)"
         )
         print(f"\n  snr_total      (recorded)   {row['snr_total']:8.2f}")
         print(f"  snr_detectable (geometry)   {row['snr_detectable']:8.2f}")
@@ -307,7 +328,7 @@ def iterate(population, n_companions, ids=None, sample=None, min_snr=None, rng=N
                     snr = [truth[f"snr_total_{j}"] for j in range(1, n_companions + 1)]
                     if not all(np.isfinite(s) and s >= min_snr for s in snr):
                         continue
-                yield audit(truth, tuple(arrays), n_companions)
+                yield audit(truth, tuple(arrays), n_companions, population)
                 seen += 1
                 if wanted:
                     wanted.discard(int(truth["gaia_source_id"]))
@@ -340,7 +361,9 @@ def main(argv=None):
     )
     parser.add_argument(
         "--population",
-        help="default 1_companion for --sample; every population for --ids",
+        help="default 1_companion. 'all' scans every population -- note a "
+        "gaia_source_id appears in ALL THREE, as the same star with different "
+        "companions, so --ids without this looks only at 1_companion",
     )
     parser.add_argument("--ids", type=int, nargs="+", help="specific gaia_source_ids")
     parser.add_argument("--sample", type=int, help="audit this many random systems")
@@ -357,12 +380,14 @@ def main(argv=None):
         parser.error("--catalog-root is required unless --self-test/--calibrate")
     PG.set_catalog_root(args.catalog_root)
     rng = np.random.default_rng(args.seed)
-    # With explicit ids, search every population: a source id does not say which
-    # one it is in, and "no systems matched" because the default was wrong is a
-    # confusing way to find that out.
+    # A gaia_source_id is NOT unique across populations: the same parent star is
+    # simulated once per population, and `system_seed` mixes the population name
+    # in so each gets its own companions. So "search every population for this
+    # id" finds it three times and reports whichever came first -- which is
+    # 0_companion, i.e. always a control. Name the population instead.
     populations = (
         list(PG.POPULATIONS)
-        if args.ids and args.population is None
+        if args.population == "all"
         else [args.population or "1_companion"]
     )
     rows = []
@@ -377,8 +402,6 @@ def main(argv=None):
                 rng=rng,
             )
         )
-        if rows and args.ids and len(rows) == len(args.ids):
-            break
     if not rows:
         raise SystemExit("no systems matched")
 
@@ -391,7 +414,8 @@ def main(argv=None):
 
     frame = pd.DataFrame(rows)
     print(
-        f"\n{args.population}: {len(frame):,} systems with snr_total >= {args.min_snr:g}"
+        f"\n{', '.join(populations)}: {len(frame):,} systems with "
+        f"snr_total >= {args.min_snr:g}"
     )
     ratio = frame["sigma_ratio"]
     print(
@@ -536,7 +560,9 @@ def save_figure(frame, args):
     ax.legend(fontsize=8)
     ax.set_title("if this is 1:1, the generator is fine", fontsize=10)
     fig.suptitle(
-        f"{args.population}: is the recorded SNR the signal in the data?", fontsize=11
+        f"{args.population or '1_companion'}: is the recorded SNR the signal "
+        "in the data?",
+        fontsize=11,
     )
     path = Path(args.figure)
     path.parent.mkdir(parents=True, exist_ok=True)
