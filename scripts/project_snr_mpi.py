@@ -60,7 +60,7 @@ import pyarrow as pa
 from epochalypse import detectability as D
 from epochalypse import mpi
 from epochalypse.periodogram import config as PG
-from epochalypse.periodogram.shards import ShardReader, discover_shards, work_units
+from epochalypse.periodogram.shards import ShardReader, work_units
 from epochalypse.shardio import BufferedParquetWriter
 
 FLUSH_EVERY = 5000
@@ -78,24 +78,6 @@ class DetectabilityWriter(BufferedParquetWriter):
         return pa.Table.from_pandas(
             pd.DataFrame.from_records(rows), preserve_index=False
         )
-
-
-def sample_stars(population, n_stars, min_epochs=1):
-    """A handful of real stars, for building the orientation table.
-
-    Real ones, not synthetic: the table's whole validity rests on the scan law,
-    which is exactly what a synthetic star would get wrong.
-    """
-    numbers, n_shards = discover_shards(population)
-    stars = []
-    for shard in numbers:
-        with ShardReader(population, shard, n_shards) as reader:
-            for _index, truth, t, psi, pf, _y, yerr in reader.iter_systems():
-                if len(t) >= min_epochs:
-                    stars.append((truth, t, psi, pf, yerr))
-                if len(stars) >= n_stars:
-                    return stars
-    return stars
 
 
 def run_unit(population, shard, n_shards, table, skip_existing=False, verbose=True):
@@ -200,7 +182,7 @@ def main(argv=None):
     table = None
     if rank == 0:
         started = time.time()
-        stars = sample_stars(args.populations[-1], args.table_stars)
+        stars = D.sample_stars(args.populations[-1], args.table_stars)
         table = D.retained_table(stars, n_draws=args.table_draws)
         print(
             f"orientation table: {table.shape[0]}x{table.shape[1]} cells from "

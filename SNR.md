@@ -148,19 +148,50 @@ python scripts/diagnostics/check_snr.py --catalog-root $OUT_ROOT --across-stars
 mpirun python scripts/project_snr_mpi.py --catalog-root $OUT_ROOT
 ```
 
-**`snr_expected` is tabulated, not drawn per system.** `--across-stars` measures
-the star-to-star spread of `E[retained]` at **0.8–6.5%**, no larger than its own
-Monte Carlo noise, so `E[retained]` is a property of the *orbit* and one
-`(log10 P/T, e)` table serves the catalog. That is the difference between ~95
-and ~1,900 core-hours.
+**`snr_expected` is tabulated, not drawn per system.** Measured on the real
+catalog, 200 stars × 60 orientations, the star-to-star spread of `E[retained]`
+is **1.4–4.6%** across the whole `(P/T, e)` grid. `E[retained]` is therefore a
+property of the *orbit*, one `(log10 P/T, e)` table serves the catalog, and
+`snr_expected` costs ~nothing instead of ~1,900 core-hours.
 
-Two cautions on that measurement, both learned the hard way. It must use
-**common random numbers** — one orientation set reused for every star — or
-sampling noise lands in the between-star spread and reads as a real effect (at
-`n_trials = 12` that artefact alone was 49%, halving to 25% at 40). And it was
-taken on **uniformly distributed scan angles**; real Gaia scan angles are
-structured by ecliptic latitude, so **rerun it on any new catalog before
-trusting the table**.
+Three cautions on that measurement, all learned the hard way.
+
+It must use **common random numbers** — one orientation set reused for every
+star — or sampling noise lands in the between-star spread and reads as a real
+effect. At `n_trials = 12` that artefact alone was 49%, halving to 25% at 40
+with nothing real changing.
+
+**Read `between` in absolute terms, not against `within`.** Because the shared
+Monte Carlo error has already cancelled out of the between-star comparison,
+`between` sits *below* `within` in several cells — that is the design working.
+`within` only shows that each star's own median is resolved; it is not a
+threshold to clear. A few percent is negligible against the factor of 2–6
+orientation spread the quantity summarizes.
+
+**Sample stars across shards, not from one.** A shard is a contiguous region of
+sky, and both things retention depends on — transit count and scan-angle
+distribution — vary with ecliptic latitude. The first version drew from one
+patch and covered 68–87 epochs of a catalog range of 44–298, testing neither
+extreme.
+
+### Eccentricity is not monotonic, and changes sign with period
+
+From the same run:
+
+| P/T | E[ret] at e = 0.1 | E[ret] at e = 0.6 |
+| --- | --- | --- |
+| 2.0 | 0.291 | **0.324** |
+| 5.0 | 0.054 | **0.024** |
+
+At `P/T = 2` eccentricity *helps*: the fast periastron passage is the one part
+of a partly-covered orbit the astrometric basis cannot mimic, while a circular
+orbit over the same window is a smoother curve and more absorbable. By
+`P/T = 5` the orbit spends nearly all the window near apastron, barely moving,
+and eccentricity hurts instead.
+
+This is a further argument that no closed form will do. A correction term in `e`
+would need to change sign with period, on top of the factor-of-6 orientation
+spread it still could not capture.
 
 **Out of scope:** the periodogram stage cuts on `HIGH_SNR_MIN` too and would
 benefit from the same treatment. Nothing there has been changed.

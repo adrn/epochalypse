@@ -649,22 +649,14 @@ def across_stars(args):
     Scatter under ~10% means the table is enough.
     """
     from epochalypse import constants as k
+    from epochalypse import detectability as D
     from epochalypse.detectability import reflex_of, snr_detectable
 
     T = k.DR4_BASELINE_YEARS
     rng = np.random.default_rng(args.seed)
     population = args.population or "1_companion"
-    numbers, n_shards = discover_shards(population)
 
-    stars = []
-    for shard in numbers:
-        with ShardReader(population, shard, n_shards) as reader:
-            for _index, truth, t, psi, pf, _y, yerr in reader.iter_systems():
-                stars.append((truth, t, psi, pf, yerr))
-                if len(stars) >= args.n_stars:
-                    break
-        if len(stars) >= args.n_stars:
-            break
+    stars = D.sample_stars(population, args.n_stars)
 
     print(
         f"{len(stars)} real stars from {population}, {args.n_trials} "
@@ -723,18 +715,24 @@ def across_stars(args):
                 f" {float(np.median(halves)) / 2:11.1%}"
             )
     print(
-        "\n  'between' is the star-to-star spread of E[retained]; 'within' is how"
-        "\n  much of that is Monte Carlo, from splitting each star's own draws in"
-        "\n  half. Only the excess of 'between' over 'within' is real."
+        "\n  READ 'between' IN ABSOLUTE TERMS, not as a ratio to 'within'. It is the"
+        "\n  star-to-star spread of E[retained] under COMMON orientations, so the"
+        "\n  shared Monte Carlo error has already cancelled out of it -- which is why"
+        "\n  it can sit well BELOW 'within' and that is the design working, not a"
+        "\n  contradiction. 'within' is only there to show that each star's own"
+        "\n  median is resolved; it is not a threshold to clear."
         "\n"
-        "\n  between ~ within  -> E[retained] is a property of the ORBIT alone."
+        "\n  between of a few percent -> E[retained] is a property of the ORBIT."
         "\n    Tabulate retained_median(P/T, e) once, apply it analytically, and"
-        "\n    snr_expected costs nothing."
-        "\n  between >> within -> a property of the STAR too, so every system needs"
-        "\n    its own orientation draws (~1,900 core-hours over the catalog)."
+        "\n    snr_expected costs nothing. A few percent is negligible against the"
+        "\n    factor of 2-6 orientation spread the quantity is summarizing."
+        "\n  between of tens of percent -> a property of the STAR too, so every"
+        "\n    system needs its own draws (~1,900 core-hours over the catalog)."
         "\n"
-        "\n  Raise --n-trials until 'within' is small before concluding either: an"
-        "\n  undersampled median manufactures the answer."
+        "\n  CHECK THE EPOCH RANGE printed above against the catalog's (44-298). The"
+        "\n  stars are drawn across shards, hence across sky, because both things"
+        "\n  retention depends on -- transit count and scan-angle distribution --"
+        "\n  vary with ecliptic latitude. A narrow range means a narrow test."
     )
     return 0
 

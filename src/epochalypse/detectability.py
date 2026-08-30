@@ -232,6 +232,36 @@ TABLE_LOG_RATIO = np.linspace(-1.5, 1.5, 25)  # P/T from 0.032 to 32
 TABLE_ECC = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 0.95])
 
 
+def sample_stars(population, n_stars, spread=True):
+    """`n_stars` real stars, spread ACROSS shards rather than taken from one.
+
+    A shard is a contiguous block of the source list, so it is a contiguous
+    region of sky -- and both things `retained` depends on, the transit count
+    and the scan-angle distribution, vary with ecliptic latitude. Taking the
+    first `n_stars` in shard order therefore samples one patch: measured on the
+    real catalog it returned epoch counts spanning 68-87 out of a catalog range
+    of 44-298, which silently understates any star-to-star variation.
+
+    Taking a few from every shard costs one open per shard and covers the sky.
+    """
+    from .periodogram.shards import ShardReader, discover_shards
+
+    numbers, n_shards = discover_shards(population)
+    per_shard = max(1, -(-int(n_stars) // len(numbers))) if spread else int(n_stars)
+    stars = []
+    for shard in numbers:
+        taken = 0
+        with ShardReader(population, shard, n_shards) as reader:
+            for _index, truth, t, psi, pf, _y, yerr in reader.iter_systems():
+                stars.append((truth, t, psi, pf, yerr))
+                taken += 1
+                if taken >= per_shard or len(stars) >= n_stars:
+                    break
+        if len(stars) >= n_stars:
+            break
+    return stars
+
+
 def retained_table(stars, n_draws=40, seed=0, baseline_years=None):
     """E[retained] over a `(log10 P/T, e)` grid, averaged over stars and orientation.
 
