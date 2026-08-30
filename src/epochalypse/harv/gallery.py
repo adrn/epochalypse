@@ -496,10 +496,24 @@ def make_gallery(population="1_companion", per_bin=None, verbose=True):
         samples = read_samples(population, int(shard), n_shards, list(wanted))
         blocks = {int(r): samples.iloc[i] for i, r in enumerate(samples["shard_row"])}
         with ShardReader(population, int(shard), n_shards) as reader:
-            for index, _truth, t, psi, pf, y, yerr in reader.iter_systems():
+            for index, truth, t, psi, pf, y, yerr in reader.iter_systems():
                 if index not in wanted:
                     continue
                 row = chosen.loc[wanted[index]]
+                # The samples are addressed by (shard, shard_row) and the epochs
+                # by position in the shard, so pointing --catalog-root at a
+                # catalog the run did not use lines up the wrong star's epochs
+                # against the right star's posterior -- silently, and every panel
+                # then looks like a fit that failed. The ids are in both tables;
+                # check them rather than trusting the two roots to match.
+                if int(truth["gaia_source_id"]) != int(blocks[index]["gaia_source_id"]):
+                    msg = (
+                        f"{population} shard {shard} row {index}: the catalog has "
+                        f"gaia {int(truth['gaia_source_id'])} but the samples have "
+                        f"gaia {int(blocks[index]['gaia_source_id'])}. "
+                        "--catalog-root is not the catalog this run was fitted on."
+                    )
+                    raise ValueError(msg)
                 written.append(
                     plot_system(
                         row, blocks[index], (t, psi, pf, y, yerr), root / row["cell"]

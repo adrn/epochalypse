@@ -333,6 +333,14 @@ def test_gallery():
             set(got["shard_row"]) == set(rows),
             f"asked for {rows}, got {sorted(got['shard_row'])}",
         )
+        # The samples carry the id, so a catalog/run mismatch is detectable
+        # rather than a silent misalignment of epochs against posteriors.
+        check(
+            "the stored samples carry the id the epochs can be checked against",
+            "gaia_source_id" in got.columns
+            and got["gaia_source_id"].nunique() == len(rows),
+            "make_gallery raises when the two disagree",
+        )
 
 
 def test_gallery_weights():
