@@ -562,6 +562,134 @@ def test_stride_partitions():
     )
 
 
+def test_detectability():
+    """The projection: what a fit could ever see of an injected orbit."""
+    import pandas as pd
+
+    from epochalypse import constants as k
+    from epochalypse import detectability as D
+    from epochalypse.astrometry import simulate_along_scan
+
+    rng = np.random.default_rng(3)
+    n = 120
+    T = k.DR4_BASELINE_YEARS
+    t = np.sort(rng.uniform(-T / 2, T / 2, n))
+    psi = rng.uniform(0, 2 * np.pi, n)
+    pf = np.sin(2 * np.pi * t)
+    yerr = np.full(n, 0.05)
+    star = {
+        "mass_st_msun": 0.5,
+        "radius_st_rsun": 0.5,
+        "parallax_mas": 20.0,
+        "pmra_mas_yr": 25.0,
+        "pmdec_mas_yr": -10.0,
+        "sigma_single_mas": 0.05,
+    }
+    orbit = {
+        "mass_pl": 8.0,
+        "inc": 55.0,
+        "omega": 30.0,
+        "Omega": 200.0,
+        "M_anom": 100.0,
+    }
+
+    def truth(**periods):
+        row = dict(star)
+        for j, (period, ecc) in enumerate(periods["orbits"], start=1):
+            row |= {f"{key}_{j}": value for key, value in orbit.items()}
+            row |= {f"period_{j}": period, f"ecc_{j}": ecc}
+        return pd.Series(row)
+
+    # A short-period orbit has nowhere to hide: many cycles across the window
+    # look nothing like a straight line, so the astrometric fit absorbs almost
+    # none of it and the detectable SNR approaches the nominal one.
+    short = truth(orbits=[(0.15, 0.05)])
+    reflex = D.injected_reflex(short, t, psi, pf, 1)
+    snr, retained = D.snr_detectable(reflex, t, psi, pf, yerr, 0.05)
+    nominal = np.sqrt(n) * np.sqrt(np.mean(reflex**2)) / 0.05
+    check(
+        "a short-period orbit keeps nearly all of its signal",
+        retained > 0.9 and np.isclose(snr, nominal * retained, rtol=1e-9),
+        f"retained {retained:.1%}, snr_detectable {snr:.1f}",
+    )
+
+    # ...and a long one is mostly a straight line, which is what proper motion is.
+    fractions = []
+    for ratio in (0.2, 1.0, 2.0, 5.0, 10.0):
+        row = truth(orbits=[(ratio * T, 0.05)])
+        fractions.append(
+            D.retained_fraction(
+                D.injected_reflex(row, t, psi, pf, 1), t, psi, pf, yerr
+            )[0]
+        )
+    check(
+        "retention falls monotonically as the period passes the baseline",
+        all(a > b for a, b in zip(fractions, fractions[1:])),
+        "P/T " + " ".join(f"{f:.3f}" for f in fractions),
+    )
+    check(
+        "and collapses for an orbit twice the mission span",
+        fractions[2] < 0.4,
+        f"{fractions[2]:.1%} survives at P/T = 2 -- a RAILED fit there is correct",
+    )
+
+    # The photocentre traces the SUM, so per-companion reflexes are additive.
+    # This is what lets snr_detectable_k be attributed to one companion.
+    pair = truth(orbits=[(1.3, 0.1), (4.0, 0.4)])
+    parts = D.per_companion_reflex(pair, t, psi, pf, 2)
+    check(
+        "per-companion reflexes sum to the whole",
+        np.allclose(sum(parts), D.injected_reflex(pair, t, psi, pf, 2), atol=1e-9),
+        f"{len(parts)} companions",
+    )
+
+    # The reconstruction must agree with the generator, or every number above is
+    # a measurement of a different orbit than the one in the data.
+    y, _ = simulate_along_scan(
+        t,
+        psi,
+        [{**orbit, "period": 1.7, "ecc": 0.2}],
+        mstar=0.5,
+        rstar=0.5,
+        parallax=20.0,
+        mu_alpha=25.0,
+        mu_delta=-10.0,
+        parallax_factor=pf,
+        sigma_ueva=0.05,
+        seed=7,
+    )
+    row = truth(orbits=[(1.7, 0.2)])
+    design = (
+        np.column_stack(
+            [D.astrometric_design(t, psi, pf, 5), D.injected_reflex(row, t, psi, pf, 1)]
+        )
+        / yerr[:, None]
+    )
+    theta, *_ = np.linalg.lstsq(design, np.asarray(y) / yerr, rcond=None)
+    check(
+        "the reconstructed reflex fits the generated data at amplitude 1",
+        abs(float(theta[-1]) - 1.0) < 0.15,
+        f"{float(theta[-1]):.4f}",
+    )
+
+    # The table: E[retained] over orientation, interpolated.
+    table = D.retained_table([(row, t, psi, pf, yerr)], n_draws=6)
+    check(
+        "the orientation table falls with period, like the orbits it averages",
+        D.expected_retained(table, 0.3 * T, 0.1)
+        > D.expected_retained(table, 3.0 * T, 0.1),
+        f"{D.expected_retained(table, 0.3 * T, 0.1):.3f} vs "
+        f"{D.expected_retained(table, 3.0 * T, 0.1):.3f}",
+    )
+    check(
+        "and interpolates a whole column at once, which is how the stage uses it",
+        np.asarray(
+            D.expected_retained(table, np.array([1.0, 10.0]), np.array([0.1, 0.5]))
+        ).shape
+        == (2,),
+    )
+
+
 def test_fit_system():
     arrays = fake_system(n_epochs=90, period=1.7, alpha=1.5, seed=4)
     lib, prior = L.draw(N_LIB), L.prior(m_star_msun=0.41)

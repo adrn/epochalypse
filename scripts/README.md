@@ -14,6 +14,7 @@ ended up as two implementations of one comparison.
 | `characterize_mpi.py` | periodogram search (MPI) |
 | `characterize_finish.py` | calibrate, census, merge |
 | `harv_mpi.py` | posterior inference (MPI) |
+| `project_snr_mpi.py` | detectable SNR per system — see `SNR.md`. After simulation, before the harv figures |
 | `harv_finish.py` | census, recovery, figures, gallery, merge |
 
 `mpi/1-prep.sh` … `mpi/7-harv-finish.sh` are the submit scripts, in that order;
@@ -26,7 +27,7 @@ Read-only. None of these re-run the fits, and none are part of the pipeline.
 
 | script | question |
 | --- | --- |
-| `check_snr.py` | is `snr_total` the signal that is actually in the along-scan data? Also `--calibrate`, which measures `snr_eff`'s absorption penalty against exact geometry, and `--self-test`, which checks the reflex reconstruction against the generator. Both need no catalog. |
+| `check_snr.py` | is `snr_total` the signal that is actually in the along-scan data? `--calibrate` measures `snr_eff`'s absorption penalty against exact geometry and `--self-test` checks the reflex reconstruction against the generator (neither needs a catalog); `--across-stars` decides whether `snr_expected` can be tabulated. See `SNR.md`. |
 | `inspect_system.py` | for one system: could the data ever have distinguished the reported period from the true one? Profile chi-square, plus a both-orbits fit for two-companion systems. |
 
 ## `benchmarks/` — sizing and calibration runs whose results justify a production choice

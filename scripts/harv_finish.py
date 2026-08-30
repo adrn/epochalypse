@@ -170,12 +170,12 @@ def stage_recovery(args):
         if not n_companions:
             continue
         columns = (
-            ["period_best_yr", "ess", "weight_captured"]
+            ["gaia_source_id", "period_best_yr", "ess", "weight_captured"]
             + _period_columns(population)
             + [f"snr_total_{k}" for k in range(1, n_companions + 1)]
             + [f"ecc_{k}" for k in range(1, n_companions + 1)]
         )
-        table = _systems(population, columns)
+        table = census.with_detectability(_systems(population, columns), population)
         high_snr = _high_snr_mask(table, population)
         frame = table.to_pandas()
         frame["recovered"] = _recovered(table, population)
@@ -184,6 +184,10 @@ def stage_recovery(args):
         # of whichever companion `recovered()` matched, so the SNR binning below
         # describes the orbit that was actually found
         frame["snr_total_best"] = census.best_truth(table, population, "snr_total")
+        if census.has_detectability(table, population):
+            frame["snr_detectable_best"] = census.best_truth(
+                table, population, "snr_detectable"
+            )
         frame = frame[high_snr] if high_snr is not None else frame
         if frame.empty:
             continue
@@ -260,10 +264,16 @@ def stage_recovery(args):
         # the Occam penalty on a real orbit relative to the null, so if railing
         # falls off a cliff at some SNR and is near zero above it, that cliff IS
         # the threshold -- and it should sit at HIGH_SNR_MIN, not above it.
-        snr = np.asarray(frame["snr_total_best"], float)
+        column = (
+            "snr_detectable_best"
+            if "snr_detectable_best" in frame
+            else "snr_total_best"
+        )
+        snr = np.asarray(frame[column], float)
         frame["log_snr"] = np.log10(np.maximum(snr, 1e-3))
         bins = np.linspace(np.log10(PG.HIGH_SNR_MIN), np.nanmax(frame["log_snr"]), 9)
-        print(f"\n  rail fraction vs SNR (HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}):")
+        which = "DETECTABLE" if column.startswith("snr_detect") else "recorded total"
+        print(f"\n  rail fraction vs {which} SNR (cut at {PG.HIGH_SNR_MIN:g}):")
         index = census.bin_index(frame["log_snr"], bins)
         for b in range(len(bins) - 1):
             sel = index == b

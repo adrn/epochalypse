@@ -429,9 +429,21 @@ fixed-size library resolves with *fewer* effective samples. Low ESS where
 recovery is high is correct. ESS says "the library did not sample this
 posterior", never "the answer is wrong".
 
-**4. `harv_detection`** — `logZ_int` per population, with `0_companion` as the
-null distribution, the completeness curve against injected SNR, and the rail
-rate against SNR. That last panel is about the *prior*: `sigma_a0` fixes the
+**4. `harv_detection`** — four panels: `logZ_int` per population with
+`0_companion` as the null distribution, **two** completeness curves, and the
+rail rate.
+
+The two completeness curves are the point. One is against `SNR_det`, what
+survives the five-parameter astrometric fit — the *method* view, "given a signal
+this strong is genuinely present, does harv find it?". The other is against
+`SNR_exp`, the same thing marginalized over the orientation no real survey knows
+— the *survey* view, and the only one an occurrence-rate correction can use. The
+gap between them is how much `snr_total` was overstating detectability: a median
+orbit keeps ~60% of its amplitude and 18.6% keep under 25%. **Every figure here
+now bins on `SNR_det`**, falling back to `snr_total` when
+`project_snr_mpi.py` has not run and saying so in the axis label. See `SNR.md`.
+
+The rail rate That last panel is about the *prior*: `sigma_a0` fixes the
 Occam penalty a real orbit pays against the null, so if railing falls off a
 cliff well above `HIGH_SNR_MIN`, the amplitude prior is setting the detection
 threshold rather than the data.

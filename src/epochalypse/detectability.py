@@ -209,3 +209,107 @@ def snr_expected(truth, index, t, psi, pf, yerr, sigma_single, n_draws=20, seed=
         reflex = reflex_of(truth, t, psi, pf, [drawn])
         values.append(snr_detectable(reflex, t, psi, pf, yerr, sigma_single)[0])
     return tuple(float(v) for v in np.nanpercentile(values, [50, 16, 84]))
+
+
+# ==========================================================================
+# The orientation-marginalized table
+# ==========================================================================
+# `snr_expected` needs E[retained] marginalized over inclination, node, argument
+# of periastron and phase. Doing that per system costs ~20 reflex evaluations
+# each, which is ~1,900 core-hours over the catalog.
+#
+# It does not have to be per system. `check_snr.py --across-stars` measures the
+# star-to-star spread of E[retained] with common random numbers, against a
+# within-star Monte Carlo control, and finds the between-star part is 0.8-6.5%
+# and no larger than the noise. E[retained] is a property of the ORBIT -- of
+# `(P/T, e)` -- so one table serves the catalog and the marginalization becomes
+# an interpolation.
+#
+# Grid in log10(P/T) because that is the variable the physics is smooth in: a
+# half-cycle orbit and a hundred-cycle orbit differ by orders of magnitude in
+# retention, not by a factor.
+TABLE_LOG_RATIO = np.linspace(-1.5, 1.5, 25)  # P/T from 0.032 to 32
+TABLE_ECC = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 0.95])
+
+
+def retained_table(stars, n_draws=40, seed=0, baseline_years=None):
+    """E[retained] over a `(log10 P/T, e)` grid, averaged over stars and orientation.
+
+    `stars` is a sequence of `(truth, t, psi, pf, yerr)`. A few dozen is plenty
+    -- the star-to-star spread is a few percent, so the average converges far
+    faster than the orientation marginalization does.
+
+    Common random numbers: one orientation set per cell, reused for every star.
+    That removes the Monte Carlo error from the star average rather than letting
+    it accumulate into it.
+    """
+    from . import constants as k
+
+    baseline = k.DR4_BASELINE_YEARS if baseline_years is None else baseline_years
+    rng = np.random.default_rng(seed)
+    table = np.zeros((len(TABLE_LOG_RATIO), len(TABLE_ECC)))
+    for i, log_ratio in enumerate(TABLE_LOG_RATIO):
+        for j, ecc in enumerate(TABLE_ECC):
+            draws = [
+                {
+                    "mass_pl": 10.0,
+                    "period": float(10.0**log_ratio * baseline),
+                    "ecc": float(ecc),
+                    "inc": float(np.degrees(np.arccos(rng.uniform(-1.0, 1.0)))),
+                    "omega": float(rng.uniform(0.0, 360.0)),
+                    "Omega": float(rng.uniform(0.0, 360.0)),
+                    "M_anom": float(rng.uniform(0.0, 360.0)),
+                }
+                for _ in range(int(n_draws))
+            ]
+            values = [
+                retained_fraction(
+                    reflex_of(truth, t, psi, pf, [drawn]), t, psi, pf, yerr
+                )[0]
+                for truth, t, psi, pf, yerr in stars
+                for drawn in draws
+            ]
+            table[i, j] = float(np.median(values))
+    return table
+
+
+def expected_retained(table, period_yr, ecc, baseline_years=None):
+    """Interpolate `retained_table` at one orbit, or at millions of them.
+
+    Bilinear in `(log10 P/T, e)`, clamped at the grid edges -- beyond
+    `P/T = 32` the retained fraction is already ~1e-3 and its exact value stops
+    mattering against everything else in a selection function.
+
+    Written out rather than handed to `scipy.interpolate`: this runs once per
+    companion over 17.2 M systems, so it has to be vectorized over the whole
+    column, and a per-point interpolator call would dominate the stage.
+    """
+    from . import constants as k
+
+    baseline = k.DR4_BASELINE_YEARS if baseline_years is None else baseline_years
+    scalar = np.ndim(period_yr) == 0 and np.ndim(ecc) == 0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_ratio = np.log10(np.asarray(period_yr, dtype=np.float64) / baseline)
+    ecc = np.asarray(ecc, dtype=np.float64)
+    log_ratio, ecc = np.broadcast_arrays(np.atleast_1d(log_ratio), np.atleast_1d(ecc))
+
+    i = np.clip(
+        np.searchsorted(TABLE_LOG_RATIO, log_ratio) - 1, 0, TABLE_LOG_RATIO.size - 2
+    )
+    j = np.clip(np.searchsorted(TABLE_ECC, ecc) - 1, 0, TABLE_ECC.size - 2)
+    wl = np.clip(
+        (log_ratio - TABLE_LOG_RATIO[i])
+        / (TABLE_LOG_RATIO[i + 1] - TABLE_LOG_RATIO[i]),
+        0.0,
+        1.0,
+    )
+    we = np.clip((ecc - TABLE_ECC[j]) / (TABLE_ECC[j + 1] - TABLE_ECC[j]), 0.0, 1.0)
+    value = (
+        (1 - wl) * (1 - we) * table[i, j]
+        + wl * (1 - we) * table[i + 1, j]
+        + (1 - wl) * we * table[i, j + 1]
+        + wl * we * table[i + 1, j + 1]
+    )
+    # a non-finite period (a control system has none) interpolates to nothing
+    value = np.where(np.isfinite(log_ratio), value, np.nan)
+    return float(value[0]) if scalar else value

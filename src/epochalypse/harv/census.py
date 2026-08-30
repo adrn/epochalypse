@@ -52,13 +52,80 @@ def read_systems(population, columns=None):
     return ds.dataset(source, format="parquet").to_table(columns=columns)
 
 
-def system_columns(population, extra=()):
-    """The columns a diagnostic needs, for however many companions there are."""
+def detectability_path(population):
+    """Where `project_snr_mpi.py` writes this population's projections."""
+    return C.catalog_root() / "detectability" / population
+
+
+def with_detectability(table, population):
+    """Left-join `snr_detectable_k`, `snr_expected_k` and `retained_k` onto a
+    per-system table, on `gaia_source_id`.
+
+    Returns the table UNCHANGED when the projection stage has not been run, so
+    every figure keeps working on output produced before it existed. Callers
+    check for the column rather than assuming it.
+
+    Joined at read time rather than written into the truth columns because the
+    projection is a separate stage over an existing catalog. For a future
+    catalog it belongs in `simulate_mpi.py`, where the reflex is already in hand
+    -- see `scripts/project_snr_mpi.py`.
+
+    An Arrow join rather than a pandas merge so `best_truth` keeps working on
+    the result: it reads `f"{name}_{k}"` off a Table, and it is the one place
+    that knows how to pick the companion the fit actually matched.
+    """
+    source = detectability_path(population)
+    if not source.exists():
+        return table  # the projection stage has not been run; callers fall back
+    if "gaia_source_id" not in table.column_names:
+        # Not a missing stage -- a caller that built its own column list and
+        # left out the join key. Silent fallback here reads as "no projections
+        # exist", which sends someone to rerun a stage that already ran.
+        import warnings
+
+        warnings.warn(
+            f"detectability for {population} exists but the table has no "
+            "gaia_source_id to join on; add it to the requested columns",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return table
     n = C.POPULATIONS[population]
-    columns = ["ess", "weight_captured", "logZ_int", "period_best_yr", *extra]
+    columns = ["gaia_source_id"] + [
+        f"{name}_{k}"
+        for name in ("retained", "snr_detectable", "snr_expected")
+        for k in range(1, n + 1)
+    ]
+    projected = ds.dataset(source, format="parquet").to_table(columns=columns)
+    return table.join(projected, keys="gaia_source_id", join_type="left outer")
+
+
+def has_detectability(table, population):
+    """Did the join land? False means fall back to `snr_total` and say so."""
+    n = C.POPULATIONS[population]
+    return not n or f"snr_detectable_{n}" in table.column_names
+
+
+def system_columns(population, extra=()):
+    """The columns a diagnostic needs, for however many companions there are.
+
+    `gaia_source_id` is always included: it is the key `with_detectability`
+    joins on, and a caller who forgot it got an Arrow error about a missing
+    field reference rather than anything about SNR. Deduplicated, so passing it
+    through `extra` as well is harmless.
+    """
+    n = C.POPULATIONS[population]
+    columns = [
+        "gaia_source_id",
+        "ess",
+        "weight_captured",
+        "logZ_int",
+        "period_best_yr",
+        *extra,
+    ]
     for k in range(1, n + 1):
         columns += [f"period_{k}", f"ecc_{k}", f"snr_total_{k}"]
-    return columns
+    return list(dict.fromkeys(columns))
 
 
 def period_columns(population):

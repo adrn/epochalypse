@@ -127,7 +127,16 @@ def _weighted_scatter(ax, x, y, w, keep):
 def _cells(frame):
     """Assign each system to a (SNR, log-period) cell; returns the labels."""
     log_bins = np.asarray(C.GALLERY_LOG_PERIOD_BINS)
-    si = census.bin_index(frame["snr_total_best"], census.SNR_BINS)
+    # snr_detectable when the projection stage has run: a cell labelled "snr40-80"
+    # that mixes an orbit the astrometric fit keeps with one it eats is not a
+    # regime, it is two.
+    column = (
+        "snr_detectable_best"
+        if "snr_detectable_best" in frame
+        and np.isfinite(frame["snr_detectable_best"]).any()
+        else "snr_total_best"
+    )
+    si = census.bin_index(frame[column], census.SNR_BINS)
     pi = census.bin_index(np.log10(frame["period_best"]), log_bins)
     labels = []
     for s, p in zip(si, pi):
@@ -165,11 +174,16 @@ def select(population="1_companion", per_bin=None, high_snr=True):
     columns = census.system_columns(population, extra) + [
         f"alpha_mas_{k}" for k in range(1, n + 1)
     ]
-    table = census.read_systems(population, columns)
+    table = census.with_detectability(
+        census.read_systems(population, columns), population
+    )
     frame = table.to_pandas()
     frame["recovered"] = census.recovered(table, population)
     frame["railed"] = census.railed(table)
-    for name in ("period", "ecc", "snr_total", "alpha_mas"):
+    names = ["period", "ecc", "snr_total", "alpha_mas"]
+    if census.has_detectability(table, population):
+        names += ["snr_detectable", "retained"]
+    for name in names:
         frame[f"{name}_best"] = census.best_truth(table, population, name)
     mask = census.high_snr_mask(table, population)
     if high_snr and mask is not None:
@@ -242,8 +256,11 @@ def plot_system(row, block, arrays, out_dir):
 
     fig, axes = plt.subplots(2, 3, figsize=(19.5, 9.0), layout="constrained")
     p_true, snr = row["period_best"], row["snr_total_best"]
+    detectable = row.get("snr_detectable_best", float("nan"))
     fig.suptitle(
-        f"gaia {int(row['gaia_source_id'])}   SNR$_{{tot}}$={snr:.1f}   "
+        f"gaia {int(row['gaia_source_id'])}   SNR$_{{tot}}$={snr:.1f}"
+        + (f" (det {detectable:.1f})" if np.isfinite(detectable) else "")
+        + "   "
         f"$P_{{true}}$={p_true:.4f} yr   $e$={row['ecc_best']:.2f}   "
         f"$\\alpha$={row['alpha_mas_best']:.3f} mas   "
         + (

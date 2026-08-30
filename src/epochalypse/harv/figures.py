@@ -75,6 +75,36 @@ def _save(fig, stem):
 
 TRUTHS = ("period", "ecc", "snr_total")
 
+# Every SNR-like quantity in this project, and what each one honestly claims.
+# The whole failure this addresses was an axis that did not mean what it was
+# read to mean, so no figure may label one of these generically as "SNR".
+# (axis symbol, what it means). Split because the gloss belongs in a title --
+# spelled out on an axis it is wider than the panel and collides with its
+# neighbours, which is how the first version of harv_detection came out.
+SNR_LABELS = {
+    "snr_total": (r"SNR$_{\rm tot}$", "recorded: plausibly observable"),
+    "snr_detectable": (r"SNR$_{\rm det}$", "survives the astrometric fit"),
+    "snr_expected": (r"SNR$_{\rm exp}$", "marginalized over orientation"),
+}
+
+
+def snr_axis(frame, prefer="snr_detectable"):
+    """`(column, symbol, gloss)` for the SNR a figure should bin on.
+
+    `snr_detectable` by default: recovery figures ask "given a signal this
+    strong is genuinely present, does harv find it?", and `snr_total` is not
+    that -- it ignores the part of the orbit the free astrometric parameters
+    absorb, which is ~40% of a median orbit and over 90% of the worst.
+
+    Falls back to `snr_total` when `project_snr_mpi.py` has not run, and SAYS SO
+    in the label rather than quietly plotting a different quantity.
+    """
+    column = f"{prefer}_best"
+    if column in frame.columns and np.isfinite(frame[column]).any():
+        return (column, *SNR_LABELS[prefer])
+    symbol, gloss = SNR_LABELS["snr_total"]
+    return "snr_total_best", symbol, gloss + " -- projection not run"
+
 
 def _frame(population, high_snr=True, in_range=False, extra=(), truths=TRUTHS):
     """One population as a DataFrame with the census flags and matched truths.
@@ -89,6 +119,12 @@ def _frame(population, high_snr=True, in_range=False, extra=(), truths=TRUTHS):
     companion, since `census.system_columns` only knows about the standard three.
     """
     table = census.read_systems(population, census.system_columns(population, extra))
+    # The projections live beside the catalog, not in the harv output, and are
+    # absent on any run predating `project_snr_mpi.py`. Joined here so every
+    # figure gets them, and `best_truth` resolves them per matched companion.
+    table = census.with_detectability(table, population)
+    if census.has_detectability(table, population):
+        truths = (*truths, "snr_detectable", "snr_expected")
     frame = table.to_pandas()
     frame["recovered"] = census.recovered(table, population)
     frame["railed"] = census.railed(table)
@@ -258,7 +294,8 @@ def plot_period_aliases(population="1_companion"):
     frame = _frame(population, in_range=True)
     p_true = np.asarray(frame["period_best"], float)
     p_best = np.asarray(frame["period_best_yr"], float)
-    snr = np.asarray(frame["snr_total_best"], float)
+    snr_column, snr_symbol, snr_gloss = snr_axis(frame)
+    snr = np.asarray(frame[snr_column], float)
     rec = frame["recovered"].to_numpy().astype(bool)
 
     fig, axes = plt.subplots(
@@ -303,7 +340,7 @@ def plot_period_aliases(population="1_companion"):
         alpha=0.8,
         lw=0,
     )
-    fig.colorbar(sc, ax=ax, fraction=0.046, label=r"$\log_{10}$ SNR$_{\rm tot}$")
+    fig.colorbar(sc, ax=ax, fraction=0.046, label=rf"$\log_{{10}}$ {snr_symbol}")
     ax.set(
         xscale="log",
         yscale="log",
@@ -428,7 +465,7 @@ def plot_detection(population="1_companion"):
     completeness curve -- recovery against injected SNR, which is what tells you
     where the method turns on rather than where you chose to cut.
     """
-    fig, axes = plt.subplots(1, 3, figsize=(17, 4.6), layout="constrained")
+    fig, axes = plt.subplots(1, 4, figsize=(21, 4.6), layout="constrained")
 
     for pop in C.POPULATIONS:
         frame = _frame(pop, high_snr=False)
@@ -449,53 +486,66 @@ def plot_detection(population="1_companion"):
     axes[0].set_title("evidence: the control is the null distribution", fontsize=10)
     axes[0].legend(fontsize=7.5)
 
+    # Two completeness curves, because "does harv work?" and "what fraction of
+    # planets does the survey find?" are different questions with different
+    # answers, and using one axis for both is what this whole investigation was
+    # about. snr_detectable conditions on the true inclination and phase -- the
+    # right thing for a method question, and unusable for an occurrence rate,
+    # which cannot condition on what no survey knows.
     frame = _frame(population, high_snr=False, in_range=True)
-    snr = np.asarray(frame["snr_total_best"], float)
-    frame["log_snr"] = np.log10(np.maximum(snr, 1e-3))
-    bins = np.linspace(-2, np.nanmax(frame["log_snr"]), 12)
-    centres, fraction, n = _binned(frame, "log_snr", bins)
-    _fraction_curve(axes[1], centres, fraction, n, POP_COLORS[population])
-    axes[1].axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
-    axes[1].text(
-        np.log10(PG.HIGH_SNR_MIN),
-        0.95,
-        f"  HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}",
-        fontsize=8,
-        va="top",
-    )
-    axes[1].set(
-        xlabel=r"$\log_{10}$ SNR$_{\rm tot}$ of the matched companion",
-        ylabel="fraction recovered",
-        ylim=(0, 1),
-    )
-    axes[1].set_title(f"{population}: completeness against injected SNR", fontsize=10)
+    detect_column, detect_symbol, _ = snr_axis(frame, "snr_detectable")
+    expect_column, expect_symbol, _ = snr_axis(frame, "snr_expected")
 
-    # Rail fraction against SNR -- the curve that says whether the AMPLITUDE
-    # prior is setting the detection threshold rather than the data. sigma_a0
-    # controls the Occam penalty on a real orbit relative to the no-orbit
-    # solution, and that penalty grows with period because the prior width
-    # scales as (P/P0)^(2/3). If railing falls off a cliff at some SNR and is
-    # near zero above it, that cliff IS the threshold -- and it should sit at
-    # HIGH_SNR_MIN, not well above it. A cliff at SNR ~ 7 against a cut at 5 is
-    # what would justify changing sigma_a0.
-    xs, rail, ns = _binned(frame, "log_snr", bins, value="railed")
-    _fraction_curve(axes[2], xs, rail, ns, "#C2185B")
-    axes[2].axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
-    axes[2].text(
-        np.log10(PG.HIGH_SNR_MIN),
-        0.95,
-        f"  HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}",
-        fontsize=8,
-        va="top",
-    )
-    axes[2].set(
-        xlabel=r"$\log_{10}$ SNR$_{\rm tot}$ of the matched companion",
+    for ax, column, label, title in (
+        (
+            axes[1],
+            detect_column,
+            detect_symbol,
+            "METHOD: given this signal is present,\ndoes harv find it?",
+        ),
+        (
+            axes[2],
+            expect_column,
+            expect_symbol,
+            "SURVEY: the axis an occurrence rate\nintegrates (orientation averaged out)",
+        ),
+    ):
+        values = np.asarray(frame[column], float)
+        key = f"log_{column}"
+        frame[key] = np.log10(np.maximum(values, 1e-3))
+        bins = np.linspace(-2, np.nanmax(frame[key]), 12)
+        centres, fraction, n = _binned(frame, key, bins)
+        _fraction_curve(ax, centres, fraction, n, POP_COLORS[population])
+        ax.axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
+        ax.text(
+            np.log10(PG.HIGH_SNR_MIN),
+            0.95,
+            f"  HIGH_SNR_MIN = {PG.HIGH_SNR_MIN:g}\n  (a cut on SNR$_{{\\rm tot}}$)",
+            fontsize=7.5,
+            va="top",
+        )
+        ax.set(
+            xlabel=rf"$\log_{{10}}$ {label}", ylabel="fraction recovered", ylim=(0, 1)
+        )
+        ax.set_title(title, fontsize=9)
+
+    # Rail fraction against the SAME axis as the method panel. sigma_a0 controls
+    # the Occam penalty on a real orbit relative to the no-orbit solution, so a
+    # cliff here that sits above the selection floor means the amplitude prior,
+    # not the data, is setting the detection threshold.
+    key = f"log_{detect_column}"
+    bins = np.linspace(-2, np.nanmax(frame[key]), 12)
+    xs, rail, ns = _binned(frame, key, bins, value="railed")
+    _fraction_curve(axes[3], xs, rail, ns, "#C2185B")
+    axes[3].axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
+    axes[3].set(
+        xlabel=rf"$\log_{{10}}$ {detect_symbol}",
         ylabel="railed fraction",
         ylim=(0, 1),
     )
-    axes[2].set_title(
-        "no-detection rate: a cliff above HIGH_SNR_MIN means\n"
-        "the amplitude prior, not the data, sets the threshold",
+    axes[3].set_title(
+        "no-detection rate: a cliff well above the cut\n"
+        "means the amplitude PRIOR sets the threshold",
         fontsize=9,
     )
     return _save(fig, "detection")
@@ -520,10 +570,11 @@ def plot_amplitude(population="1_companion"):
     frame = _frame(
         population,
         in_range=True,
-        extra=("mass_st_msun", "parallax_mas")
+        extra=("mass_st_msun", "parallax_mas", "gaia_source_id")
         + _companion_columns(population, "alpha_mas", "mass_pl"),
         truths=(*TRUTHS, "alpha_mas", "mass_pl"),
     )
+    snr_column, snr_symbol, snr_gloss = snr_axis(frame)
     fig, axes = plt.subplots(1, 3, figsize=(17, 4.8), layout="constrained")
     fig.suptitle(
         f"{population}, high-SNR within the searched range -- {len(frame):,} systems.  "
@@ -663,8 +714,14 @@ def plot_precision(population="1_companion"):
     frame = _frame(
         population,
         in_range=True,
-        extra=("n_transits_dr4", "period_wmean_yr", "period_wstd_yr"),
+        extra=(
+            "n_transits_dr4",
+            "period_wmean_yr",
+            "period_wstd_yr",
+            "gaia_source_id",
+        ),
     )
+    snr_column, snr_symbol, snr_gloss = snr_axis(frame)
     fig, axes = plt.subplots(1, 3, figsize=(17, 4.8), layout="constrained")
     fig.suptitle(
         f"{population}, high-SNR within the searched range -- {len(frame):,} systems",
@@ -728,7 +785,7 @@ def plot_precision(population="1_companion"):
     ax.set_title("is the reported spread an uncertainty?", fontsize=10)
 
     ax = axes[1]
-    snr = np.asarray(frame["snr_total_best"], float)
+    snr = np.asarray(frame[snr_column], float)
     with np.errstate(divide="ignore", invalid="ignore"):
         error = np.abs(np.asarray(frame["period_best_yr"], float) / p_true - 1.0)
     ok = rec & np.isfinite(error) & (error > 0)
@@ -751,10 +808,10 @@ def plot_precision(population="1_companion"):
         ax.legend(fontsize=7.5)
     ax.set(
         yscale="log",
-        xlabel=r"$\log_{10}$ SNR$_{\rm tot}$",
+        xlabel=rf"$\log_{{10}}$ {snr_symbol}",
         ylabel=r"$|P_{\rm best}/P_{\rm true} - 1|$",
     )
-    ax.set_title("fractional period error, recovered only", fontsize=10)
+    ax.set_title(f"fractional period error, recovered only\n({snr_gloss})", fontsize=9)
 
     # Epoch count at FIXED SNR, so the two are not confounded.
     ax = axes[2]
