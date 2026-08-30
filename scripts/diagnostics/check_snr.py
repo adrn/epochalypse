@@ -8,6 +8,10 @@
 Over the epoch shards: two least-squares solves and one projection per system.
 No prior library and no posterior sampling, so thousands of systems in a minute.
 
+The projection itself lives in `epochalypse.detectability`, shared with the
+`project_snr_mpi.py` stage that writes it for the whole catalog -- this script is
+the diagnostic view of one measurement, not a second implementation of it.
+
 THE NO-SIGNAL FLOOR IS NOT ONE. The generator injects noise at one scale and
 reports it at another, on purpose:
 
@@ -74,23 +78,13 @@ from pathlib import Path
 
 import numpy as np
 
+from epochalypse.detectability import (
+    astrometric_design,
+    injected_reflex,
+    retained_fraction,
+)
 from epochalypse.periodogram import config as PG
 from epochalypse.periodogram.shards import ShardReader, discover_shards
-
-
-def astrometric_design(t, psi, pf, n_columns=5):
-    """The along-scan astrometric basis, straight from the simulator's own model.
-
-    `simulate_along_scan` writes
-    `al = sin(psi) (ra0 + mu_a t) + cos(psi) (dec0 + mu_d t) + parallax * pf`,
-    so these five columns span exactly the motion a Gaia five-parameter solution
-    can absorb. Any basis spanning the same space gives the same residual, so
-    there is nothing to get wrong here and no need for harv's design matrix.
-
-    """
-    sin_psi, cos_psi = np.sin(psi), np.cos(psi)
-    columns = [sin_psi, cos_psi, t * sin_psi, t * cos_psi, pf]
-    return np.column_stack(columns[:n_columns])
 
 
 def reduced_chi2(t, psi, pf, y, yerr, n_columns=5):
@@ -101,72 +95,6 @@ def reduced_chi2(t, psi, pf, y, yerr, n_columns=5):
     theta, *_ = np.linalg.lstsq(a, b, rcond=None)
     residual = (y - design @ theta) / yerr
     return float(np.sum(residual**2) / max(len(y) - n_columns, 1))
-
-
-def injected_reflex(truth, t, psi, pf, n_companions):
-    """The exact noise-free companion signal, from the generator's own function.
-
-    Calls `simulate_along_scan` twice -- with the companions and without -- and
-    differences them. Zero convention risk: this is the same code that wrote the
-    data, so degrees-vs-radians, sign and phase definitions cannot drift.
-    """
-    from epochalypse.astrometry import simulate_along_scan
-
-    companions = [
-        {
-            "mass_pl": float(truth[f"mass_pl_{j}"]),
-            "period": float(truth[f"period_{j}"]),
-            "ecc": float(truth[f"ecc_{j}"]),
-            "inc": float(truth[f"inc_{j}"]),
-            "omega": float(truth[f"omega_{j}"]),
-            "Omega": float(truth[f"Omega_{j}"]),
-            "M_anom": float(truth[f"M_anom_{j}"]),
-        }
-        for j in range(1, n_companions + 1)
-    ]
-    shared = {
-        "mstar": float(truth["mass_st_msun"]),
-        "rstar": float(truth["radius_st_rsun"]),
-        "parallax": float(truth["parallax_mas"]),
-        "mu_alpha": float(truth["pmra_mas_yr"]),
-        "mu_delta": float(truth["pmdec_mas_yr"]),
-        "parallax_factor": pf,
-        "sigma_ueva": 0.0,
-        "seed": 0,
-    }
-    _, with_orbit = simulate_along_scan(t, psi, companions, **shared)
-    _, without = simulate_along_scan(t, psi, [], **shared)
-    return np.asarray(with_orbit) - np.asarray(without)
-
-
-def retained_fraction(reflex, t, psi, pf, yerr):
-    """How much of THIS orbit survives the five-parameter astrometric fit.
-
-    Position, proper motion and parallax are free, so whatever part of the
-    companion signal those five columns reproduce is subtracted along with them
-    and can never be detected -- no matter how large `alpha` is. What is left is
-    the entire detectable signal.
-
-    Measured on the actual injected reflex rather than on the orbit's design
-    columns. An earlier version projected the four Thiele-Innes columns
-    independently and averaged their Frobenius norms, which is not the retained
-    fraction of any real orbit: a partial arc has one well-retained direction in
-    that 4-D space and three nearly-killed ones, so the average described
-    nothing and read ~60% where the truth was ~10%.
-
-    A half-cycle orbit is close to a quadratic in time, and constant plus linear
-    is exactly what position and proper motion are. Expect single-digit
-    percentages for a period near twice the observing span.
-    """
-    design = astrometric_design(t, psi, pf, 5) / yerr[:, None]
-    target = reflex / yerr
-    fitted, *_ = np.linalg.lstsq(design, target, rcond=None)
-    left = target - design @ fitted
-    total = float(np.sum(target**2))
-    return (
-        float(np.sqrt(np.sum(left**2) / total)) if total > 0 else 0.0,
-        float(np.sqrt(np.mean(left**2))),
-    )
 
 
 def audit(truth, arrays, n_companions, population="?"):
@@ -354,6 +282,14 @@ def main(argv=None):
         help="measure snr_eff's absorption penalty against the exact geometry, "
         "over a grid in P/T and eccentricity; needs no catalog",
     )
+    parser.add_argument(
+        "--across-stars",
+        action="store_true",
+        help="is E[retained] a property of the orbit alone, or of the star too? "
+        "Decides whether snr_expected can be tabulated or must be drawn per "
+        "system -- a ~1,900 core-hour difference. Needs --catalog-root",
+    )
+    parser.add_argument("--n-stars", type=int, default=200)
     parser.add_argument("--n-trials", type=int, default=60)
     parser.add_argument("--n-epochs", type=int, default=100)
     parser.add_argument(
@@ -376,6 +312,14 @@ def main(argv=None):
         return self_test()
     if args.calibrate:
         return calibrate(args)
+    if args.across_stars:
+        if args.catalog_root is None:
+            parser.error(
+                "--across-stars needs --catalog-root: the whole question "
+                "is whether the real scan law matters"
+            )
+        PG.set_catalog_root(args.catalog_root)
+        return across_stars(args)
     if args.catalog_root is None:
         parser.error("--catalog-root is required unless --self-test/--calibrate")
     PG.set_catalog_root(args.catalog_root)
@@ -679,6 +623,118 @@ def calibrate(args):
         "\n  where periastron falls relative to the observing window -- which the"
         "\n  formula cannot see. The fix is then not a better heuristic but an"
         "\n  exact per-system projection."
+    )
+    return 0
+
+
+def across_stars(args):
+    """Is the retained fraction a property of the ORBIT, or of the star too?
+
+    This decides how `snr_expected` gets computed, and the difference is ~1,900
+    core-hours. `retained` is purely geometric -- independent of `alpha` -- so
+
+        snr_expected = snr_single * sqrt(N) * E[retained | P, e, scan pattern]
+
+    and if `E[retained]` is stable across stars it can be tabulated once as
+    `retained_median(P/T, e)` and applied analytically for free. If it is not,
+    every system needs its own orientation draws.
+
+    There is real reason to expect star dependence: the astrometric basis is
+    `[sin psi, cos psi, t sin psi, t cos psi, pf]`, so a star whose scan angles
+    are poorly distributed spans less of the data and absorbs less of the orbit,
+    and `N` runs 44-298 across the catalog. Measure it on REAL stars -- their
+    actual epoch times, scan angles and parallax factors -- rather than on
+    synthetic ones, since the scan law is exactly the thing in question.
+
+    Scatter under ~10% means the table is enough.
+    """
+    from epochalypse import constants as k
+    from epochalypse.detectability import reflex_of, snr_detectable
+
+    T = k.DR4_BASELINE_YEARS
+    rng = np.random.default_rng(args.seed)
+    population = args.population or "1_companion"
+    numbers, n_shards = discover_shards(population)
+
+    stars = []
+    for shard in numbers:
+        with ShardReader(population, shard, n_shards) as reader:
+            for _index, truth, t, psi, pf, _y, yerr in reader.iter_systems():
+                stars.append((truth, t, psi, pf, yerr))
+                if len(stars) >= args.n_stars:
+                    break
+        if len(stars) >= args.n_stars:
+            break
+
+    print(
+        f"{len(stars)} real stars from {population}, {args.n_trials} "
+        f"orientations each. Epoch counts "
+        f"{min(len(a[1]) for a in stars)}-{max(len(a[1]) for a in stars)}.\n"
+    )
+    print(
+        f"  {'P/T':>6} {'e':>5} {'median E[ret]':>14} {'star-to-star 16-84%':>22}"
+        f" {'between':>8} {'within (MC)':>12}"
+    )
+    for ratio in (0.3, 1.0, 2.0, 5.0):
+        for ecc in (0.1, 0.6):
+            # COMMON RANDOM NUMBERS: one set of orientations, reused for every
+            # star, so a difference between stars is the scan law and nothing
+            # else. Drawing fresh orientations per star puts Monte Carlo error
+            # into the between-star spread and makes a shared table look
+            # impossible -- at n_trials=12 that artefact alone reads 49% here,
+            # and it halves to 25% at n_trials=40 without anything real changing.
+            draws = [
+                {
+                    "mass_pl": 10.0,
+                    "period": ratio * T,
+                    "ecc": ecc,
+                    "inc": float(np.degrees(np.arccos(rng.uniform(-1.0, 1.0)))),
+                    "omega": float(rng.uniform(0.0, 360.0)),
+                    "Omega": float(rng.uniform(0.0, 360.0)),
+                    "M_anom": float(rng.uniform(0.0, 360.0)),
+                }
+                for _ in range(args.n_trials)
+            ]
+            per_star, halves = [], []
+            for truth, t, psi, pf, yerr in stars:
+                values = [
+                    snr_detectable(
+                        reflex_of(truth, t, psi, pf, [drawn]),
+                        t,
+                        psi,
+                        pf,
+                        yerr,
+                        float(truth["sigma_single_mas"]),
+                    )[1]
+                    for drawn in draws
+                ]
+                per_star.append(float(np.median(values)))
+                # same star, same scan law, half the orientations each way:
+                # whatever separates these two is Monte Carlo, not the star
+                mid = len(values) // 2
+                halves.append(
+                    abs(np.median(values[:mid]) - np.median(values[mid:]))
+                    / max(per_star[-1], 1e-12)
+                )
+            lo, mid_v, hi = np.percentile(per_star, [16, 50, 84])
+            print(
+                f"  {ratio:6.1f} {ecc:5.2f} {mid_v:14.4f} {lo:11.4f} - {hi:<9.4f}"
+                f" {(hi - lo) / max(mid_v, 1e-12) / 2:7.1%}"
+                f" {float(np.median(halves)) / 2:11.1%}"
+            )
+    print(
+        "\n  'between' is the star-to-star spread of E[retained]; 'within' is how"
+        "\n  much of that is Monte Carlo, from splitting each star's own draws in"
+        "\n  half. Only the excess of 'between' over 'within' is real."
+        "\n"
+        "\n  between ~ within  -> E[retained] is a property of the ORBIT alone."
+        "\n    Tabulate retained_median(P/T, e) once, apply it analytically, and"
+        "\n    snr_expected costs nothing."
+        "\n  between >> within -> a property of the STAR too, so every system needs"
+        "\n    its own orientation draws (~1,900 core-hours over the catalog)."
+        "\n"
+        "\n  Raise --n-trials until 'within' is small before concluding either: an"
+        "\n  undersampled median manufactures the answer."
     )
     return 0
 

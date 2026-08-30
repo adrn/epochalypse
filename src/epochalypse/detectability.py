@@ -1,0 +1,211 @@
+"""How much of an injected orbit a fit could ever see.
+
+`snr_total` is not a detectability measure, and treating it as one is what sent
+a week of this project chasing a catalog bug that did not exist. The reason is
+geometric and unavoidable: **position, proper motion and parallax are free
+parameters**, so whatever part of a companion's signal those five columns can
+reproduce is subtracted along with them and can never be detected — no matter
+how large `alpha` is. An orbit whose period is comparable to the mission span is
+mostly a straight line plus a curve across the data, and a straight line is
+exactly what proper motion is.
+
+`planets.draw_companions` charges for this with
+`snr_eff = snr_single / (1 + (sma/a_crit)^3)`, which is exactly `1 + (P/T)^2`.
+That heuristic has the right period scaling — it agrees with the exact
+projection to 10-30% over `0.2 <= P/T <= 10` — but it omits the along-scan
+projection entirely, so it is optimistic by ~1.8x at short period, and it has no
+eccentricity term at all. No better formula exists, either: at fixed `(P/T, e)`
+the true retained fraction spreads by 1.9x at `e = 0` and 6.4x at `e = 0.8`,
+because the variable that dominates at long period is *where periastron falls
+relative to the observing window*, which no function of `(P, a)` can see.
+
+So this module measures it instead. Three quantities, and they answer different
+questions:
+
+| quantity | knows orientation? | answers |
+| --- | --- | --- |
+| `snr_total` (catalog) | no | **plausibly** observable |
+| `snr_detectable` | yes, exactly | observable **for this system** |
+| `snr_expected` | no, marginalized | observable **in expectation** |
+
+`snr_detectable` is the right axis for a *method* question — given a signal this
+strong is genuinely present, does the fit find it? It is the **wrong** input to
+an occurrence-rate correction, because it conditions on the true inclination and
+phase, which no real survey knows. `snr_expected` marginalizes those away and is
+the survey-facing one. See `SNR.md`.
+
+**The reflex is reconstructed by calling the generator, not by reimplementing
+it.** `injected_reflex` runs `astrometry.simulate_along_scan` twice — once with
+the companions and once without — and differences the results. Degrees versus
+radians, sign conventions and the phase definition therefore cannot drift out of
+agreement with the data, which is a real risk here: the Thiele-Innes and
+Campbell conventions differ, and a silent mismatch would look exactly like a
+missing signal.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+# The per-companion truth columns `simulate_along_scan` needs, mapped to the
+# names it takes. `periodogram.config.TRUTH_COLUMNS_COMPANION` is the authority
+# on what the shard stores; this is the subset that defines the orbit.
+ORBIT_COLUMNS = ("mass_pl", "period", "ecc", "inc", "omega", "Omega", "M_anom")
+
+
+def astrometric_design(t, psi, pf, n_columns=5):
+    """The along-scan astrometric basis, straight from the simulator's own model.
+
+    `simulate_along_scan` writes
+    `al = sin(psi) (ra0 + mu_a t) + cos(psi) (dec0 + mu_d t) + parallax * pf`,
+    so these five columns span exactly the motion a Gaia five-parameter solution
+    can absorb. Any basis spanning the same space gives the same residual, so
+    there is nothing to get wrong here and no need for harv's design matrix.
+    """
+    sin_psi, cos_psi = np.sin(psi), np.cos(psi)
+    columns = [sin_psi, cos_psi, t * sin_psi, t * cos_psi, pf]
+    return np.column_stack(columns[:n_columns])
+
+
+def _shared(truth, pf):
+    """The star-level arguments `simulate_along_scan` takes, from a truth row."""
+    return {
+        "mstar": float(truth["mass_st_msun"]),
+        "rstar": float(truth["radius_st_rsun"]),
+        "parallax": float(truth["parallax_mas"]),
+        "mu_alpha": float(truth["pmra_mas_yr"]),
+        "mu_delta": float(truth["pmdec_mas_yr"]),
+        "parallax_factor": pf,
+        "sigma_ueva": 0.0,
+        "seed": 0,
+    }
+
+
+def companion(truth, index):
+    """One companion's orbital elements, in `simulate_along_scan`'s own dict form."""
+    return {name: float(truth[f"{name}_{index}"]) for name in ORBIT_COLUMNS}
+
+
+def reflex_of(truth, t, psi, pf, companions):
+    """The noise-free along-scan signal of `companions`, and nothing else.
+
+    Differences two calls to the generator so the five-parameter astrometric
+    motion cancels exactly, leaving only the companions' contribution. `[]`
+    returns zeros, which is the honest answer for a control system.
+    """
+    from .astrometry import simulate_along_scan
+
+    if not companions:
+        return np.zeros_like(np.asarray(t, dtype=np.float64))
+    shared = _shared(truth, pf)
+    _, with_orbit = simulate_along_scan(t, psi, list(companions), **shared)
+    _, without = simulate_along_scan(t, psi, [], **shared)
+    return np.asarray(with_orbit) - np.asarray(without)
+
+
+def injected_reflex(truth, t, psi, pf, n_companions):
+    """The signal of every injected companion together."""
+    return reflex_of(
+        truth, t, psi, pf, [companion(truth, j) for j in range(1, n_companions + 1)]
+    )
+
+
+def per_companion_reflex(truth, t, psi, pf, n_companions):
+    """One reflex per companion, each computed on its own.
+
+    Per companion rather than per system because the recorded SNRs are per
+    companion (`snr_total_1`, `snr_total_2`) and `harv.census.best_truth` scores
+    a two-companion system against whichever orbit the fit actually matched.
+    A single summed number could not be attributed to either.
+
+    They are additive -- the photocentre traces the sum -- so these sum to
+    `injected_reflex`, which `tests/test_harv.py` asserts.
+    """
+    return [
+        reflex_of(truth, t, psi, pf, [companion(truth, j)])
+        for j in range(1, n_companions + 1)
+    ]
+
+
+def retained_fraction(reflex, t, psi, pf, yerr):
+    """How much of THIS orbit survives the five-parameter astrometric fit.
+
+    Projects the reflex onto the orthogonal complement of the astrometric basis,
+    inverse-variance weighted because that is the metric the fit minimizes in.
+    What is left is the entire detectable signal.
+
+    Measured on the actual injected reflex rather than on the orbit's design
+    columns. An earlier version projected the four Thiele-Innes columns
+    independently and averaged their Frobenius norms, which is not the retained
+    fraction of any real orbit: a partial arc has one well-retained direction in
+    that 4-D space and three nearly-killed ones, so the average described nothing
+    and read ~60% where the truth was ~10%.
+
+    A half-cycle orbit is close to a quadratic in time, and constant plus linear
+    is exactly what position and proper motion are. Expect single-digit
+    percentages for a period near twice the observing span.
+
+    Returns `(fraction, rms_left)`, the second in units of the REPORTED
+    uncertainty -- which is what the chi-square of a fit weighted by those
+    uncertainties would show.
+    """
+    yerr = np.asarray(yerr, dtype=np.float64)
+    design = astrometric_design(t, psi, pf, 5) / yerr[:, None]
+    target = np.asarray(reflex, dtype=np.float64) / yerr
+    fitted, *_ = np.linalg.lstsq(design, target, rcond=None)
+    left = target - design @ fitted
+    total = float(np.sum(target**2))
+    return (
+        float(np.sqrt(np.sum(left**2) / total)) if total > 0 else 0.0,
+        float(np.sqrt(np.mean(left**2))),
+    )
+
+
+def snr_detectable(reflex, t, psi, pf, yerr, sigma_single):
+    """Accumulated SNR of the part of `reflex` a fit could actually use.
+
+    `sqrt(N) * rms(reflex orthogonal to the astrometric basis) / sigma_single`,
+    divided by the INJECTED noise scale so it is directly comparable with the
+    catalog's `snr_total`, which divides by the same thing. `retained_fraction`
+    works in units of the reported uncertainty, so the ratio converts.
+
+    Returns `(snr, retained_fraction)`.
+    """
+    yerr = np.asarray(yerr, dtype=np.float64)
+    fraction, rms_left = retained_fraction(reflex, t, psi, pf, yerr)
+    reported = float(np.median(yerr))
+    if not np.isfinite(sigma_single) or sigma_single <= 0:
+        return float("nan"), fraction
+    return float(np.sqrt(len(yerr)) * rms_left * reported / sigma_single), fraction
+
+
+def snr_expected(truth, index, t, psi, pf, yerr, sigma_single, n_draws=20, seed=0):
+    """`snr_detectable` marginalized over the orientation nobody knows.
+
+    The occurrence-rate quantity. `snr_detectable` conditions on the true
+    inclination, argument of periastron, node and mean anomaly; a real survey
+    knows none of those, so a selection function expressed in terms of them is
+    not usable. This redraws all four isotropically at fixed period,
+    eccentricity and mass and returns the median, which is what a completeness
+    correction should integrate over.
+
+    `cos i` is drawn uniform, not `i` -- an isotropic orbit is uniform in
+    `cos i`, and drawing the angle instead would over-weight edge-on
+    configurations and understate detectability.
+
+    Returns `(median, 16th, 84th)`. The spread is not decoration: at `e = 0.8`
+    and `P/T = 2` it is a factor of 6, so a single expected value badly
+    misrepresents whether any individual system was findable.
+    """
+    rng = np.random.default_rng(seed)
+    base = companion(truth, index)
+    values = []
+    for _ in range(int(n_draws)):
+        drawn = dict(base)
+        drawn["inc"] = float(np.degrees(np.arccos(rng.uniform(-1.0, 1.0))))
+        drawn["omega"] = float(rng.uniform(0.0, 360.0))
+        drawn["Omega"] = float(rng.uniform(0.0, 360.0))
+        drawn["M_anom"] = float(rng.uniform(0.0, 360.0))
+        reflex = reflex_of(truth, t, psi, pf, [drawn])
+        values.append(snr_detectable(reflex, t, psi, pf, yerr, sigma_single)[0])
+    return tuple(float(v) for v in np.nanpercentile(values, [50, 16, 84]))
