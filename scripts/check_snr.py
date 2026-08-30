@@ -102,39 +102,70 @@ def reduced_chi2(t, psi, pf, y, yerr, n_columns=5):
     return float(np.sum(residual**2) / max(len(y) - n_columns, 1))
 
 
-def retained_fraction(t, psi, pf, yerr, period, ecc):
-    """How much of an orbit at this period survives the five-parameter fit.
+def injected_reflex(truth, t, psi, pf, n_companions):
+    """The exact noise-free companion signal, from the generator's own function.
 
-    An orbit whose period is comparable to or longer than the mission span is
-    partly a straight line plus a curve across the data, and position, proper
-    motion and parallax are FREE. Whatever part of the orbit those five columns
-    can reproduce is subtracted along with them and can never be detected --
-    no matter how large `alpha` is.
-
-    So project the orbit's four Thiele-Innes columns onto the orthogonal
-    complement of the astrometric basis (inverse-variance weighted, since that
-    is the metric the fit minimizes in) and return the fraction of amplitude
-    left. This is geometry alone: it needs the scan law and the period, not the
-    data, not the amplitude, and not the orbital phase.
-
-    `snr_eff` tries to charge for exactly this with `1/(1 + (sma/a_crit)^3)`.
-    Comparing the two is the point of the script.
+    Calls `simulate_along_scan` twice -- with the companions and without -- and
+    differences them. Zero convention risk: this is the same code that wrote the
+    data, so degrees-vs-radians, sign and phase definitions cannot drift.
     """
-    from epochalypse.harv import adapt
-    from epochalypse.harv import library as L
+    from epochalypse.astrometry import simulate_along_scan
 
-    data, par, _ = adapt.prepare(t, psi, pf, np.zeros_like(t), yerr)
-    design = L.design_matrix(L.model(par), data, period, ecc, 0.0)
-    real = adapt.real_rows(np.asarray(data.al_position_err.value, float))
-    weight = 1.0 / yerr[:, None]
+    companions = [
+        {
+            "mass_pl": float(truth[f"mass_pl_{j}"]),
+            "period": float(truth[f"period_{j}"]),
+            "ecc": float(truth[f"ecc_{j}"]),
+            "inc": float(truth[f"inc_{j}"]),
+            "omega": float(truth[f"omega_{j}"]),
+            "Omega": float(truth[f"Omega_{j}"]),
+            "M_anom": float(truth[f"M_anom_{j}"]),
+        }
+        for j in range(1, n_companions + 1)
+    ]
+    shared = {
+        "mstar": float(truth["mass_st_msun"]),
+        "rstar": float(truth["radius_st_rsun"]),
+        "parallax": float(truth["parallax_mas"]),
+        "mu_alpha": float(truth["pmra_mas_yr"]),
+        "mu_delta": float(truth["pmdec_mas_yr"]),
+        "parallax_factor": pf,
+        "sigma_ueva": 0.0,
+        "seed": 0,
+    }
+    _, with_orbit = simulate_along_scan(t, psi, companions, **shared)
+    _, without = simulate_along_scan(t, psi, [], **shared)
+    return np.asarray(with_orbit) - np.asarray(without)
 
-    astro = np.asarray(design)[real][:, :5] * weight
-    orbit = np.asarray(design)[real][:, 5:] * weight
-    # least squares of every orbit column against the astrometric basis at once
-    fitted, *_ = np.linalg.lstsq(astro, orbit, rcond=None)
-    left = orbit - astro @ fitted
-    total = float(np.sum(orbit**2))
-    return float(np.sqrt(np.sum(left**2) / total)) if total > 0 else 0.0
+
+def retained_fraction(reflex, t, psi, pf, yerr):
+    """How much of THIS orbit survives the five-parameter astrometric fit.
+
+    Position, proper motion and parallax are free, so whatever part of the
+    companion signal those five columns reproduce is subtracted along with them
+    and can never be detected -- no matter how large `alpha` is. What is left is
+    the entire detectable signal.
+
+    Measured on the actual injected reflex rather than on the orbit's design
+    columns. An earlier version projected the four Thiele-Innes columns
+    independently and averaged their Frobenius norms, which is not the retained
+    fraction of any real orbit: a partial arc has one well-retained direction in
+    that 4-D space and three nearly-killed ones, so the average described
+    nothing and read ~60% where the truth was ~10%.
+
+    A half-cycle orbit is close to a quadratic in time, and constant plus linear
+    is exactly what position and proper motion are. Expect single-digit
+    percentages for a period near twice the observing span.
+    """
+    design = astrometric_design(t, psi, pf, 5) / yerr[:, None]
+    target = reflex / yerr
+    fitted, *_ = np.linalg.lstsq(design, target, rcond=None)
+    left = target - design @ fitted
+    total = float(np.sum(target**2))
+    return (
+        float(np.sqrt(np.sum(left**2) / total)) if total > 0 else 0.0,
+        float(np.sqrt(np.mean(left**2))),
+    )
 
 
 def audit(truth, arrays, n_companions):
@@ -178,36 +209,41 @@ def audit(truth, arrays, n_companions):
             np.argmin([truth[f"period_{j}"] for j in range(1, n_companions + 1)]) + 1
         )
         row["ecc_min"] = float(truth[f"ecc_{shortest}"])
-        # what snr_total predicts the k=5 residual should look like. The 1/2 is
-        # the projection of a 2-D orbit onto a rotating scan direction.
-        row["chi2_predicted"] = floor * (1.0 + 0.5 * row["snr_total"] ** 2 / n)
-        row["retained"] = retained_fraction(
-            t, psi, pf, yerr, row["period_min_yr"], row["ecc_min"]
+        reflex = injected_reflex(truth, t, psi, pf, n_companions)
+        row["reflex_rms"] = float(np.sqrt(np.mean(reflex**2)))
+        # THE decisive number. Fit the exact known injected signal as one extra
+        # column beside the astrometric basis and read off its amplitude: 1.0
+        # means the data carry the orbit the truth table claims, 0.0 means they
+        # do not. No heuristic, no threshold, no projection factor.
+        stacked = (
+            np.column_stack([astrometric_design(t, psi, pf, 5), reflex]) / yerr[:, None]
         )
-        row["snr_detectable"] = row["snr_total"] * row["retained"]
+        theta, *_ = np.linalg.lstsq(stacked, y / yerr, rcond=None)
+        row["amp_injected"] = float(theta[-1])
+        row["retained"], left_rms = retained_fraction(reflex, t, psi, pf, yerr)
+        # in units of the INJECTED noise, which is what snr_total divides by
+        row["snr_detectable"] = (
+            np.sqrt(n) * left_rms * row["sigma_reported"] / row["sigma_single"]
+        )
+        row["chi2_predicted"] = floor * (1.0 + left_rms**2)
     return row
 
 
 def verdict(row):
-    """Which of the three explanations this system's numbers support."""
+    """Which of the three explanations this system's numbers support.
+
+    Keyed on `amp_injected` -- the fitted amplitude of the exact known injected
+    reflex -- because that is a measurement rather than a heuristic. Everything
+    else here is context for it.
+    """
     if "snr_total" not in row:
         return "control (no companion)"
-    if row["chi2_predicted"] / row["chi2_floor"] - 1.0 < 0.25:
-        return "no signal claimed"
-    measured, detectable, total = (
-        row["snr_measured"],
-        row["snr_detectable"],
-        row["snr_total"],
-    )
-    # sqrt(N (chi2-1)) has scatter of order sqrt(2N)/... below a few sigma, so a
-    # single weak system cannot be classified. Read the binned table for those.
-    if detectable < 5.0:
-        return "too weak to judge individually"
-    if measured > 0.5 * total:
-        return "consistent -- snr_total is in the data"
-    if detectable < 0.5 * total and measured > 0.4 * detectable:
+    amp = row["amp_injected"]
+    if not 0.5 < amp < 1.5:
+        return f"GENERATOR BUG -- injected signal fits at amplitude {amp:.2f}, not 1"
+    if row["retained"] < 0.25:
         return "ABSORBED by the 5-param fit (snr_eff penalty too weak)"
-    return "MISSING -- signal not in the data at the recorded amplitude"
+    return "consistent -- snr_total is in the data"
 
 
 def report_one(row):
@@ -238,7 +274,13 @@ def report_one(row):
         print(f"  chi2/dof after the 5-param fit  {row['chi2_astro']:8.3f}")
         print(f"  chi2/dof PREDICTED from snr_tot {row['chi2_predicted']:8.3f}")
         print(
-            f"\n  orbit amplitude surviving the astrometric fit: {row['retained']:.1%}"
+            f"\n  injected reflex rms             {row['reflex_rms']:8.5f} mas"
+            f"\n  ...surviving the 5-param fit    {row['retained']:8.1%}"
+        )
+        print(
+            f"\n  FITTED AMPLITUDE of the known injected signal: "
+            f"{row['amp_injected']:.3f}"
+            "\n  (1.0 = the data carry exactly the orbit the truth table claims)"
         )
         print(f"\n  snr_total      (recorded)   {row['snr_total']:8.2f}")
         print(f"  snr_detectable (geometry)   {row['snr_detectable']:8.2f}")
@@ -278,7 +320,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--catalog-root", type=Path, required=True)
+    parser.add_argument("--catalog-root", type=Path)
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="verify the reconstruction against the generator; needs no catalog",
+    )
     parser.add_argument(
         "--population",
         help="default 1_companion for --sample; every population for --ids",
@@ -290,6 +337,10 @@ def main(argv=None):
     parser.add_argument("--figure", type=Path, help="write the summary PNG here")
     args = parser.parse_args(argv)
 
+    if args.self_test:
+        return self_test()
+    if args.catalog_root is None:
+        parser.error("--catalog-root is required unless --self-test")
     PG.set_catalog_root(args.catalog_root)
     rng = np.random.default_rng(args.seed)
     # With explicit ids, search every population: a source id does not say which
@@ -478,6 +529,85 @@ def save_figure(frame, args):
     fig.savefig(path, bbox_inches="tight", dpi=140)
     plt.close(fig)
     print(f"\n  wrote {path}")
+
+
+def self_test():
+    """Verify the reconstruction against the generator, with no catalog at all.
+
+    Builds one system with `simulate_along_scan` itself, then asks `audit` to
+    recover it. `amp_injected` must come back at 1 -- if the reconstruction and
+    the generator ever disagree about a unit or a sign, this is where it shows,
+    rather than in a verdict blaming the catalog.
+    """
+    import pandas as pd
+
+    from epochalypse import constants as k
+    from epochalypse.astrometry import simulate_along_scan
+
+    rng = np.random.default_rng(0)
+    n = 120
+    t = np.sort(rng.uniform(-k.DR4_BASELINE_YEARS / 2, k.DR4_BASELINE_YEARS / 2, n))
+    psi = rng.uniform(0, 2 * np.pi, n)
+    pf = np.sin(2 * np.pi * t)
+    sigma = 0.05
+    companion = {
+        "mass_pl": 8.0,
+        "period": 1.7,
+        "ecc": 0.2,
+        "inc": 55.0,
+        "omega": 30.0,
+        "Omega": 200.0,
+        "M_anom": 100.0,
+    }
+    truth = pd.Series(
+        {
+            "gaia_source_id": 1,
+            "sigma_single_mas": sigma,
+            "parallax_mas": 20.0,
+            "mass_st_msun": 0.5,
+            "radius_st_rsun": 0.5,
+            "pmra_mas_yr": 25.0,
+            "pmdec_mas_yr": -10.0,
+            "mass_pl_1": companion["mass_pl"],
+            "period_1": companion["period"],
+            "ecc_1": companion["ecc"],
+            "inc_1": companion["inc"],
+            "omega_1": companion["omega"],
+            "Omega_1": companion["Omega"],
+            "M_anom_1": companion["M_anom"],
+            "alpha_mas_1": np.nan,
+            "snr_total_1": np.nan,
+            "snr_single_1": np.nan,
+        }
+    )
+    y, _ = simulate_along_scan(
+        t,
+        psi,
+        [companion],
+        mstar=0.5,
+        rstar=0.5,
+        parallax=20.0,
+        mu_alpha=25.0,
+        mu_delta=-10.0,
+        parallax_factor=pf,
+        sigma_ueva=sigma,
+        seed=7,
+    )
+    y = np.asarray(y)
+    yerr = np.full(n, sigma)
+    reflex = injected_reflex(truth, t, psi, pf, 1)
+    stacked = (
+        np.column_stack([astrometric_design(t, psi, pf, 5), reflex]) / yerr[:, None]
+    )
+    theta, *_ = np.linalg.lstsq(stacked, y / yerr, rcond=None)
+    amp = float(theta[-1])
+    retained, _ = retained_fraction(reflex, t, psi, pf, yerr)
+    print(f"  reflex rms          {np.sqrt(np.mean(reflex**2)):.5f} mas")
+    print(f"  retained            {retained:.1%}")
+    print(f"  fitted amplitude    {amp:.4f}   (must be ~1)")
+    ok = abs(amp - 1.0) < 0.15
+    print(f"\n  {'PASS' if ok else 'FAIL'}: reconstruction agrees with the generator")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
