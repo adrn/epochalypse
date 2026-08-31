@@ -2,9 +2,15 @@
 """Put several harv runs side by side, so an arm can be judged against a baseline.
 
     python scripts/benchmarks/compare_runs.py \
-        --roots $HARV_ROOT-reported $HARV_ROOT-injected $HARV_ROOT-jitter \
-        --labels reported injected jitter \
-        --figure $HARV_ROOT-compare/compare.png
+        --roots $HARV_ROOT-err-* --figure $HARV_ROOT-compare/errors.png
+
+Labels default to the directory names, which is safer than passing `--labels`
+against a shell glob -- the two orderings have to agree and nothing checks that
+they describe the same arms.
+
+Put `--figure` where `--roots` cannot glob back onto it. A PNG written to
+`$HARV_ROOT-err-compare.png` matches `$HARV_ROOT-err-*`, and the next
+invocation treats it as an arm.
 
 Every run writes its own `--output-root` with its own manifest, census and
 figures. That keeps arms from contaminating each other, and makes them
@@ -315,9 +321,39 @@ def main(argv=None):
     parser.add_argument("--figure", type=Path)
     args = parser.parse_args(argv)
 
+    # A shell glob picks up whatever matches, including this script's own
+    # output: `--roots $HARV_ROOT-err-* --figure $HARV_ROOT-err-compare.png`
+    # writes a PNG that the next invocation's glob then treats as a run root.
+    # Say that, rather than dying six frames down in read_systems.
+    roots = [root for root in args.roots if root.is_dir()]
+    dropped = [root for root in args.roots if not root.is_dir()]
+    if dropped:
+        print(
+            "skipping "
+            + ", ".join(root.name for root in dropped)
+            + " -- not a directory."
+            + (
+                "\n  A figure written inside the globbed path matches the glob;"
+                "\n  put it somewhere the pattern does not reach."
+                if any(root.suffix in (".png", ".pdf") for root in dropped)
+                else ""
+            )
+            + "\n"
+        )
+    missing = [r for r in roots if not (r / "systems").exists()]
+    if missing:
+        parser.error(
+            "no harv output under: "
+            + ", ".join(str(r) for r in missing)
+            + " (expected a systems/ directory in each)"
+        )
+    if not roots:
+        parser.error("no run directories to compare")
+    args.roots = roots
+
     labels = args.labels or [root.name for root in args.roots]
     if len(labels) != len(args.roots):
-        parser.error("--labels must match --roots")
+        parser.error(f"--labels has {len(labels)} entries for {len(roots)} roots")
 
     runs = []
     for label, root in zip(labels, args.roots):
