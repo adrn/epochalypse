@@ -150,10 +150,35 @@ def retained_fraction(reflex, t, psi, pf, yerr):
     uncertainties would show.
     """
     yerr = np.asarray(yerr, dtype=np.float64)
-    design = astrometric_design(t, psi, pf, 5) / yerr[:, None]
-    target = np.asarray(reflex, dtype=np.float64) / yerr
-    fitted, *_ = np.linalg.lstsq(design, target, rcond=None)
-    left = target - design @ fitted
+    reflex = np.asarray(reflex, dtype=np.float64)
+    design = astrometric_design(t, psi, pf, 5)
+
+    # A zero or non-finite uncertainty divides to inf and LAPACK's SVD then
+    # fails to converge outright -- `LinAlgError: SVD did not converge in Linear
+    # Least Squares`, which killed a production rank and with it the whole
+    # shard. The catalog is known to contain such rows: `harv_finish`'s census
+    # counts systems whose log-likelihoods are all non-finite for the same
+    # reason. Drop them rather than propagating a crash.
+    usable = (
+        np.isfinite(yerr)
+        & (yerr > 0)
+        & np.isfinite(reflex)
+        & np.isfinite(design).all(axis=1)
+    )
+    if usable.sum() <= design.shape[1]:
+        return float("nan"), float("nan")
+
+    scaled = design[usable] / yerr[usable, None]
+    target = reflex[usable] / yerr[usable]
+    try:
+        fitted, *_ = np.linalg.lstsq(scaled, target, rcond=None)
+    except np.linalg.LinAlgError:
+        # A degenerate scan geometry can leave the basis rank-deficient even
+        # with every row finite. The pseudo-inverse of the 5x5 normal matrix is
+        # well defined there, and 5x5 is small enough that the extra work is
+        # free at this scale.
+        fitted = np.linalg.pinv(scaled.T @ scaled) @ (scaled.T @ target)
+    left = target - scaled @ fitted
     total = float(np.sum(target**2))
     return (
         float(np.sqrt(np.sum(left**2) / total)) if total > 0 else 0.0,

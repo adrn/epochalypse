@@ -672,6 +672,23 @@ def test_detectability():
         f"{float(theta[-1]):.4f}",
     )
 
+    # A zero or non-finite uncertainty made LAPACK's SVD fail to converge
+    # outright, which killed a production rank and every shard it had left.
+    # The catalog is known to contain such rows.
+    bad = np.full(n, 0.05)
+    bad[5] = 0.0
+    bad[9] = np.nan
+    fraction, _ = D.retained_fraction(reflex, t, psi, pf, bad)
+    check(
+        "a zero or NaN uncertainty is dropped, not propagated into the solve",
+        np.isfinite(fraction),
+        f"retained {fraction:.3f} with two unusable epochs of {n}",
+    )
+    check(
+        "and a system with NO usable epochs returns NaN rather than raising",
+        not np.isfinite(D.retained_fraction(reflex, t, psi, pf, np.zeros(n))[0]),
+    )
+
     # The table: E[retained] over orientation, interpolated.
     table = D.retained_table([(row, t, psi, pf, yerr)], n_draws=6)
     check(

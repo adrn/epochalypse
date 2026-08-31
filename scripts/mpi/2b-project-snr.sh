@@ -2,7 +2,8 @@
 #SBATCH -J epochalypse-project-snr
 #SBATCH -o scripts/mpi/logs/epochalypse-project-snr.o
 #SBATCH -e scripts/mpi/logs/epochalypse-project-snr.e
-#SBATCH -N 2
+#SBATCH -N 4
+#SBATCH --ntasks-per-node=96
 #SBATCH --exclusive
 #SBATCH -t 4:00:00
 #SBATCH -p cca
@@ -26,10 +27,16 @@
 # under 25%, and the worst case measured keeps 5.4% -- a recorded snr_total of
 # 21.5 against a detectable 1.85. Every recovery figure was binning on that.
 #
-# COST. ~50 systems/s per core, so ~95 core-hours over 17.2 M systems: about
-# an hour on two genoa nodes, and ~5% of what the harv fits cost. Per-system
+# COST. ~50 systems/s per core, so ~95 core-hours over 17.2 M systems: ~15 min
+# on 4 genoa nodes, and a few percent of what the harv fits cost. Per-system
 # cost is flat, so ranks get contiguous slices and no cost-aware balancing is
 # needed -- unlike 6-harv.sh, where the epoch-count spread is 2.7x.
+#
+# --ntasks-per-node IS NOT OPTIONAL. The work list is 960 whole shards (one unit
+# per shard, no --n-parts), so a rank count of 2 rather than 384 gives each rank
+# ~480 shards instead of ~3. The first attempt at this stage left it unset and
+# died on the 4-hour limit having barely started; every other script in this
+# directory sets it, and this one now does too.
 #
 # FOR A FUTURE CATALOG THIS BELONGS IN 2-sim.sh. The reflex is already in hand
 # there -- it is what gets added to the astrometric model -- so the marginal

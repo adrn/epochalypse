@@ -88,48 +88,76 @@ def run_unit(population, shard, n_shards, table, skip_existing=False, verbose=Tr
 
     n_companions = PG.POPULATIONS[population]
     started = time.time()
+    failures = []
     with (
         ShardReader(population, shard, n_shards) as reader,
         DetectabilityWriter(path, FLUSH_EVERY, PG.PARQUET_COMPRESSION) as writer,
     ):
         for index, truth, t, psi, pf, _y, yerr in reader.iter_systems():
-            record = {
-                "gaia_source_id": int(truth["gaia_source_id"]),
-                "shard": int(shard),
-                "shard_row": int(index),
-                "n_epochs": len(t),
-            }
-            sigma_single = float(truth["sigma_single_mas"])
-            for j, reflex in enumerate(
-                D.per_companion_reflex(truth, t, psi, pf, n_companions), start=1
-            ):
-                snr, retained = D.snr_detectable(reflex, t, psi, pf, yerr, sigma_single)
-                record[f"retained_{j}"] = retained
-                record[f"snr_detectable_{j}"] = snr
-                # marginalized over orientation: the survey-facing quantity
-                expected = D.expected_retained(
-                    table, float(truth[f"period_{j}"]), float(truth[f"ecc_{j}"])
+            # One unusable star must not cost a rank its shard. `harv.unit`
+            # learned this already -- at 17.2 M systems a once-in-a-million
+            # exception still happens seventeen times -- and this stage was
+            # written without it, so a single bad uncertainty took down a
+            # production rank and every shard it had left.
+            try:
+                record = {
+                    "gaia_source_id": int(truth["gaia_source_id"]),
+                    "shard": int(shard),
+                    "shard_row": int(index),
+                    "n_epochs": len(t),
+                }
+                sigma_single = float(truth["sigma_single_mas"])
+                for j, reflex in enumerate(
+                    D.per_companion_reflex(truth, t, psi, pf, n_companions), start=1
+                ):
+                    snr, retained = D.snr_detectable(
+                        reflex, t, psi, pf, yerr, sigma_single
+                    )
+                    record[f"retained_{j}"] = retained
+                    record[f"snr_detectable_{j}"] = snr
+                    expected = D.expected_retained(
+                        table, float(truth[f"period_{j}"]), float(truth[f"ecc_{j}"])
+                    )
+                    record[f"snr_expected_{j}"] = float(
+                        np.sqrt(len(t))
+                        * expected
+                        * float(truth[f"alpha_mas_{j}"])
+                        / sigma_single
+                    )
+            except Exception as error:  # noqa: BLE001
+                failures.append(
+                    {
+                        "population": population,
+                        "shard": shard,
+                        "shard_row": index,
+                        "gaia_source_id": int(truth["gaia_source_id"]),
+                        "reason": repr(error),
+                    }
                 )
-                record[f"snr_expected_{j}"] = float(
-                    np.sqrt(len(t))
-                    * expected
-                    * float(truth[f"alpha_mas_{j}"])
-                    / sigma_single
-                )
+                continue
             writer.add(record)
         n_systems = writer.n_rows
+
+    if failures:
+        failed = PG.CATALOG_ROOT / "detectability" / "failed"
+        failed.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(failures).to_csv(
+            failed / f"{population}_shard{shard:05d}.csv", index=False
+        )
 
     elapsed = time.time() - started
     if verbose:
         print(
             f"[{population} {shard:05d}] {n_systems:>7,} systems in "
-            f"{elapsed / 60:6.1f} min ({n_systems / max(elapsed, 1e-9):5.1f}/s)",
+            f"{elapsed / 60:6.1f} min ({n_systems / max(elapsed, 1e-9):5.1f}/s)"
+            + (f", {len(failures)} FAILED" if failures else ""),
             flush=True,
         )
     return {
         "population": population,
         "shard": shard,
         "n": n_systems,
+        "n_failed": len(failures),
         "skipped": False,
         "seconds": elapsed,
     }

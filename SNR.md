@@ -149,8 +149,9 @@ mpirun python scripts/project_snr_mpi.py --catalog-root $OUT_ROOT
 ```
 
 **`snr_expected` is tabulated, not drawn per system.** Measured on the real
-catalog, 200 stars × 60 orientations, the star-to-star spread of `E[retained]`
-is **1.4–4.6%** across the whole `(P/T, e)` grid. `E[retained]` is therefore a
+catalog, 200 stars × 60 orientations drawn across shards (epoch counts 39–206),
+the star-to-star spread of `E[retained]` is **3.6–8.7%** across the
+`(P/T, e)` grid. `E[retained]` is therefore a
 property of the *orbit*, one `(log10 P/T, e)` table serves the catalog, and
 `snr_expected` costs ~nothing instead of ~1,900 core-hours.
 
@@ -171,8 +172,13 @@ orientation spread the quantity summarizes.
 **Sample stars across shards, not from one.** A shard is a contiguous region of
 sky, and both things retention depends on — transit count and scan-angle
 distribution — vary with ecliptic latitude. The first version drew from one
-patch and covered 68–87 epochs of a catalog range of 44–298, testing neither
-extreme.
+patch, covering 68–87 epochs of a catalog range of 44–298, and reported a
+between-star spread of 1.4–4.6%. Sampling across shards widened the coverage to
+39–206 and the spread to **3.6–8.7%** — so the narrow sample was understating
+it by about a factor of two. Still a few percent, so the table stands, but the
+residual is real: treat `snr_expected` as carrying a ~9% systematic, which is
+small against the factor of 2–6 orientation spread it summarizes and should be
+stated rather than ignored.
 
 ### Eccentricity is not monotonic, and changes sign with period
 
