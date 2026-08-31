@@ -49,6 +49,13 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export JAX_PLATFORMS=cpu
 
+# Clear the gallery first. Its cell directories are named for the quantity they
+# were binned on -- snrdet* once 2b-project-snr.sh has run, snrtot* before --
+# so a re-run leaves the previous naming behind beside the new one and the
+# directory becomes a mix of two binnings with nothing to tell them apart at a
+# glance. The figures themselves are regenerated, so nothing is lost.
+rm -rf $HARV_ROOT/figures/gallery
+
 date
 python scripts/harv_finish.py --output-root $HARV_ROOT --catalog-root $OUT_ROOT \
     --stages census recovery figures gallery merge
@@ -58,5 +65,7 @@ echo
 echo "diagnostics written to $HARV_ROOT/figures:"
 ls -1 $HARV_ROOT/figures 2>/dev/null
 echo
-echo "per-system gallery (start with the logP-0.1to+0.1 cells):"
+echo "per-system gallery -- snrdet* means binned on DETECTABLE SNR, snrtot* on"
+echo "the recorded one (i.e. 2b-project-snr.sh had not run). Start with the"
+echo "logP-0.1to+0.1 cells:"
 find $HARV_ROOT/figures/gallery -mindepth 2 -maxdepth 2 -type d 2>/dev/null | head -20

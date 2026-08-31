@@ -127,22 +127,28 @@ def _weighted_scatter(ax, x, y, w, keep):
 def _cells(frame):
     """Assign each system to a (SNR, log-period) cell; returns the labels."""
     log_bins = np.asarray(C.GALLERY_LOG_PERIOD_BINS)
-    # snr_detectable when the projection stage has run: a cell labelled "snr40-80"
-    # that mixes an orbit the astrometric fit keeps with one it eats is not a
-    # regime, it is two.
-    column = (
-        "snr_detectable_best"
-        if "snr_detectable_best" in frame
+    # snr_detectable when the projection stage has run: a cell labelled
+    # "snr40-80" that mixes an orbit the astrometric fit keeps with one it eats
+    # is not a regime, it is two.
+    #
+    # The DIRECTORY NAME records which one. Two runs binned on different
+    # quantities produce the same paths otherwise, and a gallery compared
+    # against an older one would silently mix them -- the same failure as an
+    # axis that does not say what it plots.
+    detectable = (
+        "snr_detectable_best" in frame
         and np.isfinite(frame["snr_detectable_best"]).any()
-        else "snr_total_best"
     )
+    column = "snr_detectable_best" if detectable else "snr_total_best"
+    tag = "snrdet" if detectable else "snrtot"
     si = census.bin_index(frame[column], census.SNR_BINS)
     pi = census.bin_index(np.log10(frame["period_best"]), log_bins)
     labels = []
     for s, p in zip(si, pi):
         hi = census.SNR_BINS[s + 1]
         labels.append(
-            f"snr{census.SNR_BINS[s]:g}-{'inf' if not np.isfinite(hi) else f'{hi:g}'}"
+            f"{tag}{census.SNR_BINS[s]:g}-"
+            f"{'inf' if not np.isfinite(hi) else f'{hi:g}'}"
             f"_logP{log_bins[p]:+.1f}to{log_bins[p + 1]:+.1f}"
         )
     return np.array(labels)

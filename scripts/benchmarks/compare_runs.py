@@ -74,12 +74,18 @@ def load(root, population):
     if C.manifest_path().exists():
         manifest = json.loads(C.manifest_path().read_text())
     extra = ("n_epochs",)
-    table = census.read_systems(population, census.system_columns(population, extra))
+    table = census.with_detectability(
+        census.read_systems(population, census.system_columns(population, extra)),
+        population,
+    )
     frame = table.to_pandas()
     frame["recovered"] = census.recovered(table, population)
     frame["railed"] = census.railed(table)
     frame["searchable"] = census.in_search_range(table, population)
-    for name in ("period", "snr_total"):
+    names = ["period", "snr_total"]
+    if census.has_detectability(table, population):
+        names.append("snr_detectable")
+    for name in names:
         frame[f"{name}_best"] = census.best_truth(table, population, name)
     mask = census.high_snr_mask(table, population)
     if mask is not None:
@@ -232,13 +238,18 @@ def overlay(runs, population, path):
 
     fig, axes = plt.subplots(1, 3, figsize=(17, 4.6), layout="constrained")
     snr_bins = np.linspace(np.log10(PG.HIGH_SNR_MIN), 2.6, 10)
+    column = (
+        "snr_detectable_best"
+        if "snr_detectable_best" in runs[0][1]
+        else "snr_total_best"
+    )
     for label, frame, *_ in runs:
         inside = frame[frame["searchable"].astype(bool)]
         if inside.empty:
             continue
         inside = inside.assign(
             log_period=np.log10(inside["period_best"]),
-            log_snr=np.log10(np.maximum(inside["snr_total_best"], 1e-3)),
+            log_snr=np.log10(np.maximum(inside[column], 1e-3)),
         )
         for ax, key, bins, column in (
             (axes[0], "log_period", census.LOG_PERIOD_BINS, "recovered"),
@@ -271,7 +282,11 @@ def overlay(runs, population, path):
     axes[0].set_title("recovery: higher is better", fontsize=10)
     axes[1].axvline(np.log10(PG.HIGH_SNR_MIN), color="k", ls="--", lw=1)
     axes[1].set(
-        xlabel=r"$\log_{10}$ SNR$_{\rm tot}$", ylabel="railed fraction", ylim=(0, 1)
+        xlabel=r"$\log_{10}$ SNR$_{\rm det}$"
+        if "detect" in column
+        else r"$\log_{10}$ SNR$_{\rm tot}$",
+        ylabel="railed fraction",
+        ylim=(0, 1),
     )
     axes[1].set_title("non-detections: lower is better", fontsize=10)
     axes[2].axvline(np.log10(C.ESS_RESOLVED), color="k", ls="--", lw=1)
@@ -321,12 +336,20 @@ def main(argv=None):
         "recovered",
         "recovery by injected period [yr]",
     )
+    # The detectable SNR when the projection stage has run: binning arms on
+    # snr_total puts systems the astrometric fit ate into the same cell as ones
+    # it kept, and a rail rate averaged over those two is not a rate.
+    column = (
+        "snr_detectable_best"
+        if "snr_detectable_best" in runs[0][1]
+        else "snr_total_best"
+    )
     by_bin(
         runs,
-        "snr_total_best",
+        column,
         census.SNR_BINS[:-1].tolist() + [1e9],
         "railed",
-        "rail fraction by SNR",
+        f"rail fraction by {'DETECTABLE' if 'detect' in column else 'recorded'} SNR",
     )
     if args.figure:
         overlay(runs, args.population, args.figure)
