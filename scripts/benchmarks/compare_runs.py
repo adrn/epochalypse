@@ -90,16 +90,16 @@ def load(root, population):
 def settings_table(runs):
     """What actually differed between the arms, from the manifests."""
     print("=== settings (from each run's manifest, not its directory name) ===")
-    width = max(len(label) for label, _, _ in runs) + 2
+    width = max(len(label) for label, *_ in runs) + 2
     rows = []
     for name in SETTINGS:
-        values = [str(m.get("library", {}).get(name, "-")) for _, _, m in runs]
+        values = [str(run[2].get("library", {}).get(name, "-")) for run in runs]
         if len(set(values)) > 1 or name == "fingerprint":
             rows.append((name, values))
     if not rows:
         print("  every listed setting is identical across the arms.\n")
         return
-    header = "".join(f"{label:>{width}}" for label, _, _ in runs)
+    header = "".join(f"{label:>{width}}" for label, *_ in runs)
     print(f"  {'setting':<22}{header}")
     for name, values in rows:
         print(f"  {name:<22}" + "".join(f"{v[: width - 2]:>{width}}" for v in values))
@@ -113,13 +113,72 @@ def settings_table(runs):
     print()
 
 
+def jitter_posterior(root, population, n_files=2, n_systems=400):
+    """What a jitter arm actually inferred, read off its stored samples.
+
+    THE CONTROL ARM DEPENDS ON THIS. Learning an excess variance on data whose
+    uncertainties are already correct should return jitter ~ 0. If it does not,
+    the jitter is absorbing the LIBRARY's inadequacy -- an orbit the prior
+    samples cannot match exactly is cheaper to explain as extra noise -- rather
+    than the data's. That failure mode makes the jitter arm look good for the
+    wrong reason, and it is invisible in recovery and rail rate alone.
+
+    Jitter is a sampled parameter, so it lives in the samples rather than in the
+    per-system table. Reads a couple of shard files, not the whole ~850 GB.
+    """
+    import pyarrow.dataset as ds
+
+    C.set_output_root(root)
+    files = sorted(C.samples_dir(population).glob("samples_*.parquet"))[:n_files]
+    if not files:
+        return None
+    table = ds.dataset(files, format="parquet").to_table()
+    if "jitter" not in table.column_names:
+        return None
+    weighted = []
+    for row in range(min(table.num_rows, n_systems)):
+        jitter = np.asarray(table["jitter"][row].as_py(), float)
+        lnw = np.asarray(table["ln_likelihood"][row].as_py(), float)
+        if not np.isfinite(lnw).any():
+            continue
+        w = np.exp(lnw - np.nanmax(lnw))
+        weighted.append(float((w * jitter).sum() / w.sum()))
+    return np.array(weighted) if weighted else None
+
+
+def jitter_table(runs, population):
+    """One line per arm that learned a jitter, or nothing if none did."""
+    rows = []
+    for label, _frame, manifest, root in runs:
+        if manifest.get("library", {}).get("jitter_sigma_mas") is None:
+            continue
+        values = jitter_posterior(root, population)
+        if values is None or not values.size:
+            continue
+        rows.append((label, values))
+    if not rows:
+        return
+    print("=== learned jitter, from the stored samples ===")
+    print(f"  {'run':<24}{'median':>10}{'16-84%':>20}{'n':>8}")
+    for label, values in rows:
+        lo, mid, hi = np.percentile(values, [16, 50, 84])
+        print(f"  {label:<24}{mid:>10.4f}{lo:>11.4f} -{hi:>7.4f}{values.size:>8}")
+    print(
+        "\n  On an arm whose uncertainties are ALREADY correct (--error-mode"
+        "\n  injected), a learned jitter should come back near zero. A large one"
+        "\n  there means it is absorbing the library's inability to match the orbit"
+        "\n  rather than any excess noise in the data -- which inflates the null's"
+        "\n  likelihood and can make railing WORSE while looking like a better fit.\n"
+    )
+
+
 def headline(runs, population):
     print(f"=== {population}, high-SNR, within the searched range ===")
     print(
         f"  {'run':<14}{'n':>9}{'ESS med':>10}{'railed':>9}{'recovered':>11}"
         f"{'wcap med':>10}"
     )
-    for label, frame, _ in runs:
+    for label, frame, *_ in runs:
         inside = frame[frame["searchable"].astype(bool)]
         if inside.empty:
             continue
@@ -136,13 +195,13 @@ def headline(runs, population):
 def by_bin(runs, key, bins, value, title, fmt="{:.1%}"):
     """One row per bin, one column per run."""
     print(f"=== {title} ===")
-    width = max(len(label) for label, _, _ in runs) + 2
-    header = "".join(f"{label:>{width}}" for label, _, _ in runs)
+    width = max(len(label) for label, *_ in runs) + 2
+    header = "".join(f"{label:>{width}}" for label, *_ in runs)
     print(f"  {'bin':<20}{header}   n (first run)")
     reference = None
     for b in range(len(bins) - 1):
         cells, counts = [], []
-        for _, frame, _ in runs:
+        for _label, frame, *_ in runs:
             inside = frame[frame["searchable"].astype(bool)]
             index = census.bin_index(inside[key], bins)
             sel = index == b
@@ -173,7 +232,7 @@ def overlay(runs, population, path):
 
     fig, axes = plt.subplots(1, 3, figsize=(17, 4.6), layout="constrained")
     snr_bins = np.linspace(np.log10(PG.HIGH_SNR_MIN), 2.6, 10)
-    for label, frame, _ in runs:
+    for label, frame, *_ in runs:
         inside = frame[frame["searchable"].astype(bool)]
         if inside.empty:
             continue
@@ -248,11 +307,12 @@ def main(argv=None):
     runs = []
     for label, root in zip(labels, args.roots):
         frame, manifest = load(root, args.population)
-        runs.append((label, frame, manifest))
+        runs.append((label, frame, manifest, root))
         print(f"{label:<14} {len(frame):>9,} systems   {root}")
     print()
 
     settings_table(runs)
+    jitter_table(runs, args.population)
     headline(runs, args.population)
     by_bin(
         runs,
