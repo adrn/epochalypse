@@ -77,7 +77,18 @@ TRUTHS = ("period", "ecc", "snr_total")
 
 # Every SNR-like quantity in this project, and what each one honestly claims.
 # The whole failure this addresses was an axis that did not mean what it was
-# read to mean, so no figure may label one of these generically as "SNR".
+# read to mean, so NO FIGURE MAY LABEL ONE OF THESE GENERICALLY AS "SNR" --
+# axis, legend, title or gallery directory name.
+#
+# Two principled exceptions, both about what the figure is a statement OF:
+#
+#   * a SURVEY-facing curve takes snr_expected, not snr_detectable. The latter
+#     conditions on the true inclination and phase, and an occurrence rate
+#     cannot condition on what no survey knows. harv_detection carries both.
+#   * a label DESCRIBING THE SELECTION keeps snr_total, because the sample
+#     really was cut on it -- `figures.py`'s "SNR_tot >= 5" panel labels are
+#     statements about how the catalog was subset, and relabelling them
+#     SNR_det would be false.
 # (axis symbol, what it means). Split because the gloss belongs in a title --
 # spelled out on an axis it is wider than the panel and collides with its
 # neighbours, which is how the first version of harv_detection came out.
@@ -829,13 +840,13 @@ def plot_precision(population="1_companion"):
             fraction,
             "o-",
             lw=1.4,
-            label=f"SNR {census.SNR_BINS[b]:g}-"
+            label=f"{snr_symbol} {census.SNR_BINS[b]:g}-"
             + ("inf" if not np.isfinite(top) else f"{top:g}")
             + f"  ({int(band.sum()):,})",
         )
     ax.set(xlabel="DR4 transits", ylabel="fraction recovered", ylim=(0, 1))
     ax.legend(fontsize=7)
-    ax.set_title("epochs at fixed SNR", fontsize=10)
+    ax.set_title(f"epochs at fixed {snr_symbol}", fontsize=10)
     return _save(fig, "precision")
 
 
