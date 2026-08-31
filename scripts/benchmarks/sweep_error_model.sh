@@ -18,6 +18,7 @@
 #   sbatch -J err-both     scripts/benchmarks/sweep_error_model.sh injected 0.05
 #
 #   python scripts/benchmarks/compare_runs.py --roots $HARV_ROOT-err-* \
+#       --catalog-root $OUT_ROOT \
 #       --figure $HARV_ROOT-compare/errors.png    # NOT inside -err-*
 #
 # Arguments:

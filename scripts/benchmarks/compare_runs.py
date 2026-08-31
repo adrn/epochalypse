@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Put several harv runs side by side, so an arm can be judged against a baseline.
 
-    python scripts/benchmarks/compare_runs.py \
-        --roots $HARV_ROOT-err-* --figure $HARV_ROOT-compare/errors.png
+    python scripts/benchmarks/compare_runs.py --roots $HARV_ROOT-err-* \
+        --catalog-root $OUT_ROOT --figure $HARV_ROOT-compare/errors.png
 
 Labels default to the directory names, which is safer than passing `--labels`
 against a shell glob -- the two orderings have to agree and nothing checks that
@@ -125,7 +125,7 @@ def settings_table(runs):
     print()
 
 
-def jitter_posterior(root, population, n_files=2, n_systems=400):
+def jitter_posterior(root, population, n_systems=400, max_files=200):
     """What a jitter arm actually inferred, read off its stored samples.
 
     THE CONTROL ARM DEPENDS ON THIS. Learning an excess variance on data whose
@@ -135,26 +135,29 @@ def jitter_posterior(root, population, n_files=2, n_systems=400):
     than the data's. That failure mode makes the jitter arm look good for the
     wrong reason, and it is invisible in recovery and rail rate alone.
 
-    Jitter is a sampled parameter, so it lives in the samples rather than in the
-    per-system table. Reads a couple of shard files, not the whole ~850 GB.
+    Reads files until it has `n_systems`, rather than a fixed number of files.
+    A subsampled sweep writes one file per work unit and a unit may fit only a
+    couple of systems, so "read two files" collected FOUR systems on a real
+    sweep and quoted a median off them.
     """
-    import pyarrow.dataset as ds
+    import pyarrow.parquet as pq
 
     C.set_output_root(root)
-    files = sorted(C.samples_dir(population).glob("samples_*.parquet"))[:n_files]
-    if not files:
-        return None
-    table = ds.dataset(files, format="parquet").to_table()
-    if "jitter" not in table.column_names:
-        return None
+    files = sorted(C.samples_dir(population).glob("samples_*.parquet"))
     weighted = []
-    for row in range(min(table.num_rows, n_systems)):
-        jitter = np.asarray(table["jitter"][row].as_py(), float)
-        lnw = np.asarray(table["ln_likelihood"][row].as_py(), float)
-        if not np.isfinite(lnw).any():
-            continue
-        w = np.exp(lnw - np.nanmax(lnw))
-        weighted.append(float((w * jitter).sum() / w.sum()))
+    for path in files[:max_files]:
+        table = pq.read_table(path)
+        if "jitter" not in table.column_names:
+            return None
+        for row in range(table.num_rows):
+            jitter = np.asarray(table["jitter"][row].as_py(), float)
+            lnw = np.asarray(table["ln_likelihood"][row].as_py(), float)
+            if not np.isfinite(lnw).any():
+                continue
+            w = np.exp(lnw - np.nanmax(lnw))
+            weighted.append(float((w * jitter).sum() / w.sum()))
+        if len(weighted) >= n_systems:
+            break
     return np.array(weighted) if weighted else None
 
 
@@ -174,7 +177,8 @@ def jitter_table(runs, population):
     print(f"  {'run':<24}{'median':>10}{'16-84%':>20}{'n':>8}")
     for label, values in rows:
         lo, mid, hi = np.percentile(values, [16, 50, 84])
-        print(f"  {label:<24}{mid:>10.4f}{lo:>11.4f} -{hi:>7.4f}{values.size:>8}")
+        flag = "   << too few to read" if values.size < 50 else ""
+        print(f"  {label:<24}{mid:>10.4f}{lo:>11.4f} -{hi:>7.4f}{values.size:>8}{flag}")
     print(
         "\n  On an arm whose uncertainties are ALREADY correct (--error-mode"
         "\n  injected), a learned jitter should come back near zero. A large one"
@@ -317,6 +321,13 @@ def main(argv=None):
     )
     parser.add_argument("--roots", type=Path, nargs="+", required=True)
     parser.add_argument("--labels", nargs="+", help="default: directory names")
+    parser.add_argument(
+        "--catalog-root",
+        type=Path,
+        help="needed to join the detectability columns, so the rail table bins "
+        "on SNR_det rather than the recorded SNR. Without it the tables say "
+        "which they used, but they say 'recorded'",
+    )
     parser.add_argument("--population", default="1_companion")
     parser.add_argument("--figure", type=Path)
     args = parser.parse_args(argv)
@@ -350,6 +361,9 @@ def main(argv=None):
     if not roots:
         parser.error("no run directories to compare")
     args.roots = roots
+
+    if args.catalog_root:
+        C.set_catalog_root(args.catalog_root)
 
     labels = args.labels or [root.name for root in args.roots]
     if len(labels) != len(args.roots):
